@@ -1,2 +1,3 @@
 # information_bot
-Some telegram bots
+Some telegram bots:
+- Fetching OpenAI API cost daily

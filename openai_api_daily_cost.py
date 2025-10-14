@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-# Add this script to a cronjob.
+# Note: I called it from a bash script to read correctly ENV vars (.bashrc will not work).
+#set -euo pipefail
+#source /root/.env.var
+#python3 /root/binancebot/ft_userdata/tools/costbot.py
+# I added this bash script to cron job, ex:
+# 0 9 * * * ./root/cost.bash
+
 import os, requests, datetime as dt
 
 # ===== ENV =====

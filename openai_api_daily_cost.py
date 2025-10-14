@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+# Add this script to a cronjob.
 import os, requests, datetime as dt
 
 # ===== ENV =====
+# These ENV should be read in a local .env file.
 OPENAI_KEY = os.environ["OPENAI_ADMIN_KEY"]
 BOT_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID    = os.environ["TELEGRAM_CHAT_ID"]

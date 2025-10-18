@@ -4,8 +4,10 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Optional, Tuple, Union
 
 import psutil
@@ -13,6 +15,21 @@ import pytz
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+OPENAI_COSTS_URL = "https://api.openai.com/v1/organization/costs"
+OPENAI_USAGE_URL = "https://api.openai.com/v1/organization/usage/completions"
+ASCII_STARTUP_BANNER = (
+    "```\n"
+    "     /\\\n"
+    "    /  \\\n"
+    "   / #### \\\n"
+    "  <  ####  >\n"
+    "   \\ #### /\n"
+    "    \\    /\n"
+    "     \\/\n"
+    "```"
+)
+OPENAI_REFRESH_DEFAULT_SECONDS = 300
 
 
 def env_str(name: str, default: str) -> str:
@@ -53,6 +70,7 @@ class BotSettings:
     system_disk_alert_threshold: int
     telegram_poll_timeout: int
     state_store_file: str
+    openai_refresh_seconds: int
 
 
 def load_bot_settings() -> BotSettings:
@@ -77,6 +95,7 @@ def load_bot_settings() -> BotSettings:
     poll_timeout = env_int("PNL_BOT_TELEGRAM_POLL_TIMEOUT", 25)
     state_store_file = env_str("PNL_BOT_STATE_FILE", "pnl-bot-state.json")
     default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
+    openai_refresh_seconds = env_int("PNL_BOT_OPENAI_REFRESH_SECONDS", OPENAI_REFRESH_DEFAULT_SECONDS)
 
     return BotSettings(
         default_interval_seconds=default_interval,
@@ -93,6 +112,7 @@ def load_bot_settings() -> BotSettings:
         system_disk_alert_threshold=disk_threshold,
         telegram_poll_timeout=poll_timeout,
         state_store_file=state_store_file,
+        openai_refresh_seconds=openai_refresh_seconds,
     )
 
 
@@ -102,6 +122,7 @@ class EnvConfig:
     api_secret: str
     telegram_token: str
     telegram_chat_id: str
+    openai_admin_key: Optional[str] = None
 
 
 @dataclass
@@ -118,6 +139,9 @@ class BotState:
     min_pnl: float = 0.0
     night_mode_active: bool = False
     start_time: float = field(default_factory=time.time)
+    openai_usage: Optional[dict] = None
+    openai_usage_error: Optional[str] = None
+    openai_usage_lock: Lock = field(default_factory=Lock, repr=False)
 
 
 def create_retry_session() -> requests.Session:
@@ -132,6 +156,213 @@ def create_retry_session() -> requests.Session:
     return session
 
 
+def epoch_utc(dt_obj: datetime.datetime) -> int:
+    return int(dt_obj.astimezone(datetime.timezone.utc).timestamp())
+
+
+def sum_openai_costs(session: requests.Session, key: str, start_epoch: int, end_epoch: int) -> float:
+    headers = {"Authorization": f"Bearer {key}"}
+    params = {"start_time": start_epoch, "end_time": end_epoch, "limit": 31}
+    response = session.get(OPENAI_COSTS_URL, params=params, headers=headers, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    total = 0.0
+    for bucket in payload.get("data", []):
+        rows = bucket.get("results") or bucket.get("result") or []
+        for row in rows:
+            amount = (row.get("amount") or {}).get("value", 0)
+            try:
+                total += float(amount or 0)
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
+def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_epoch: int) -> Tuple[int, int]:
+    headers = {"Authorization": f"Bearer {key}"}
+    params = {
+        "start_time": start_epoch,
+        "end_time": end_epoch,
+        "bucket_width": "1d",
+        "limit": 31,
+    }
+    response = session.get(OPENAI_USAGE_URL, params=params, headers=headers, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+
+    total_requests = 0
+    total_tokens = 0
+    for bucket in payload.get("data", []):
+        rows = bucket.get("results") or bucket.get("result") or []
+        for row in rows:
+            requests_count = int(row.get("num_model_requests", 0) or 0)
+            input_tokens = int(row.get("input_tokens", 0) or 0)
+            output_tokens = int(row.get("output_tokens", 0) or 0)
+            total_requests += requests_count
+            total_tokens += input_tokens + output_tokens
+
+            input_details = row.get("input_tokens_details") or {}
+            cached_tokens = int(input_details.get("cached_tokens", 0) or 0)
+            total_tokens += cached_tokens
+    return total_requests, total_tokens
+
+
+def retrieve_openai_usage(session: requests.Session, key: str, tzinfo: datetime.tzinfo):
+    print(f"Retrieving OpenAI usage, please wait ... it might take a while.")
+    now_local = datetime.datetime.now(tzinfo)
+    month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start_epoch = epoch_utc(month_start_local)
+    current_epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + 1
+    end_time_utc = datetime.datetime.fromtimestamp(current_epoch - 1, tz=datetime.timezone.utc)
+    end_time_local = end_time_utc.astimezone(tzinfo)
+
+    previous_month_end_local = month_start_local - datetime.timedelta(seconds=1)
+    previous_month_start_local = previous_month_end_local.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    previous_month_end_epoch = epoch_utc(
+        previous_month_end_local.replace(hour=23, minute=59, second=59, microsecond=0)
+    ) + 1
+    previous_month_start_epoch = epoch_utc(previous_month_start_local)
+
+    mtd_cost = sum_openai_costs(session, key, month_start_epoch, current_epoch)
+    last_month_cost = sum_openai_costs(session, key, previous_month_start_epoch, previous_month_end_epoch)
+    mtd_requests, mtd_tokens = sum_openai_usage(session, key, month_start_epoch, current_epoch)
+
+    return {
+        "month_start_local": month_start_local,
+        "previous_month_start_local": previous_month_start_local,
+        "previous_month_end_local": previous_month_end_local,
+        "mtd_cost": mtd_cost,
+        "last_month_cost": last_month_cost,
+        "mtd_requests": mtd_requests,
+        "mtd_tokens": mtd_tokens,
+        "refreshed_at": now_local,
+        "end_time_local": end_time_local,
+        "end_time_utc": end_time_utc,
+    }
+
+
+def format_openai_usage_report(usage: dict) -> str:
+    mtd_cost_str = f"${usage['mtd_cost']:,.4f}"
+    last_month_cost_str = f"${usage['last_month_cost']:,.4f}"
+    refreshed_at = usage.get("refreshed_at")
+    end_time_local = usage.get("end_time_local")
+    refreshed_str = (
+        f"`{refreshed_at:%Y-%m-%d %H:%M %Z}`" if isinstance(refreshed_at, datetime.datetime) else "`unknown`"
+    )
+    end_time_str = (
+        f"`{end_time_local:%Y-%m-%d %H:%M %Z}`" if isinstance(end_time_local, datetime.datetime) else "`unknown`"
+    )
+    return (
+        "*📊 OpenAI Month-to-Date*\n"
+        f"• Period: `{usage['month_start_local']:%Y-%m-%d}` → now\n"
+        f"• Cost: `{mtd_cost_str}`\n"
+        f"• Requests: `{usage['mtd_requests']:,}`\n"
+        f"• Tokens: `{usage['mtd_tokens']:,}`\n"
+        f"• Last month: `{last_month_cost_str}` (`{usage['previous_month_start_local']:%Y-%m-%d}` → "
+        f"`{usage['previous_month_end_local']:%Y-%m-%d}`)\n"
+        f"• End time: {end_time_str}\n"
+        f"• Updated: {refreshed_str}"
+    )
+
+
+def refresh_openai_usage(session: requests.Session, config: EnvConfig, state: BotState) -> Optional[dict]:
+    if not config.openai_admin_key:
+        return None
+
+    with state.openai_usage_lock:
+        try:
+            usage = retrieve_openai_usage(session, config.openai_admin_key, state.timezone)
+        except requests.RequestException as exc:
+            state.openai_usage = None
+            state.openai_usage_error = f"OpenAI usage unavailable: {exc}"
+            return None
+        except Exception as exc:
+            state.openai_usage = None
+            state.openai_usage_error = f"OpenAI usage error: {exc}"
+            return None
+
+        state.openai_usage = usage
+        state.openai_usage_error = None
+        return usage
+
+
+def start_openai_usage_worker(
+    session: requests.Session, config: EnvConfig, state: BotState, interval_seconds: int
+) -> Optional[threading.Thread]:
+    if not config.openai_admin_key:
+        return None
+
+    interval = max(60, interval_seconds)
+
+    def worker():
+        while True:
+            refresh_openai_usage(session, config, state)
+            time.sleep(interval)
+
+    thread = threading.Thread(target=worker, name="openai-usage-worker", daemon=True)
+    thread.start()
+    return thread
+
+
+def compose_status_message(
+    state: BotState,
+    status_info: Optional[str],
+    current_pnl: Union[float, str],
+    *,
+    local_time: Optional[datetime.datetime] = None,
+    openai_line: Optional[str] = None,
+) -> str:
+    info = status_info or "No system information available."
+    lines = [
+        "🧭 Status:",
+        f"• Running: `{state.is_running}`",
+        f"• Interval: `{state.interval_seconds}s`",
+        f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
+        f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
+    ]
+    if isinstance(current_pnl, (int, float)):
+        lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT`")
+    else:
+        lines.append(f"• Current PnL: `{current_pnl}`")
+    lines.extend([
+        f"• Max PnL: `{state.max_pnl} USDT`, Min: `{state.min_pnl} USDT`",
+        f"• Uptime: `{get_uptime(state)}`",
+    ])
+    if local_time is not None:
+        lines.insert(2, f"• Local time: `{local_time:%H:%M}`")
+    if openai_line:
+        lines.append(openai_line)
+    lines.append("")
+    lines.append(info)
+    return "\n".join(lines)
+
+
+def build_openai_status_line(state: BotState) -> Optional[str]:
+    with state.openai_usage_lock:
+        usage = state.openai_usage
+        error = state.openai_usage_error
+
+    if usage:
+        refreshed_at = usage.get("refreshed_at")
+        end_time_local = usage.get("end_time_local")
+        refreshed_str = (
+            f"{refreshed_at:%Y-%m-%d %H:%M %Z}" if isinstance(refreshed_at, datetime.datetime) else "unknown"
+        )
+        end_time_str = (
+            f"{end_time_local:%Y-%m-%d %H:%M %Z}" if isinstance(end_time_local, datetime.datetime) else "unknown"
+        )
+        return (
+            f"• OpenAI cost (MTD): `${usage['mtd_cost']:,.4f}` "
+            f"(last month `${usage['last_month_cost']:,.4f}`) "
+            f"[end `{end_time_str}` | updated `{refreshed_str}`]"
+        )
+    if error:
+        return f"• {error}"
+    return "• OpenAI usage: fetching..."
+
+
 def load_env_config() -> EnvConfig:
     def require_env(name: str) -> str:
         value = os.getenv(name)
@@ -144,6 +375,7 @@ def load_env_config() -> EnvConfig:
         api_secret=require_env("API_SECRET"),
         telegram_token=require_env("TELEGRAM_TOKEN"),
         telegram_chat_id=require_env("TELEGRAM_CHAT_ID"),
+        openai_admin_key=os.getenv("OPENAI_ADMIN_KEY"),
     )
 
 
@@ -330,6 +562,7 @@ def read_todos(todo_file: str) -> Optional[str]:
 
 def check_telegram_commands(
     session: requests.Session,
+    openai_session: Optional[requests.Session],
     config: EnvConfig,
     settings: BotSettings,
     state: BotState,
@@ -428,20 +661,13 @@ def check_telegram_commands(
                 state.max_pnl = max(state.max_pnl, pnl)
                 state.min_pnl = min(state.min_pnl, pnl)
                 state_changed = prev_max != state.max_pnl or prev_min != state.min_pnl
-            status_info = get_system_info_text(settings, show_all=True) or "No system information available."
+            status_info = get_system_info_text(settings, show_all=True)
+            openai_line = build_openai_status_line(state) if config.openai_admin_key else None
             send_telegram_message(
                 session,
                 config,
                 settings,
-                "🧭 Status:\n"
-                f"• Running: `{state.is_running}`\n"
-                f"• Interval: `{state.interval_seconds}s`\n"
-                f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)\n"
-                f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`\n"
-                f"• Current PnL: `{pnl} USDT`\n"
-                f"• Max PnL: `{state.max_pnl} USDT`, Min: `{state.min_pnl} USDT`\n"
-                f"• Uptime: `{get_uptime(state)}`\n\n"
-                f"• {status_info}",
+                compose_status_message(state, status_info, pnl, openai_line=openai_line),
                 state=state,
                 force_send=True,
             )
@@ -512,6 +738,36 @@ def check_telegram_commands(
                 send_telegram_message(session, config, settings, pnl, state=state, force_send=True)
             if state_changed:
                 persist_runtime_state(settings.state_store_file, state)
+        elif text in {"/openai", "/openaiusage"}:
+            if not config.openai_admin_key:
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    "❌ OpenAI admin key is not configured. Set OPENAI_ADMIN_KEY to enable this command.",
+                    state=state,
+                    force_send=True,
+                )
+                continue
+            usage_session = openai_session or session
+            refresh_openai_usage(usage_session, config, state)
+            with state.openai_usage_lock:
+                usage = state.openai_usage
+                error = state.openai_usage_error
+            if usage:
+                message = format_openai_usage_report(usage)
+            elif error:
+                message = f"❌ {error}"
+            else:
+                message = "ℹ️ OpenAI usage update is still in progress. Try again in a moment."
+            send_telegram_message(
+                session,
+                config,
+                settings,
+                message,
+                state=state,
+                force_send=True,
+            )
         elif text == "/uptime":
             send_telegram_message(
                 session,
@@ -598,6 +854,7 @@ def check_telegram_commands(
                 "• `/sysinfo` – Show system metrics\n"
                 "• `/todo <text>` – Append an item to the TODO list\n"
                 "• `/showtodo` – Display the TODO list\n"
+                "• `/openai` (`/openaiusage`) – Show OpenAI usage and cost\n"
                 "• `/help` – Show this command reference",
                 state=state,
                 force_send=True,
@@ -689,6 +946,7 @@ def main() -> None:
         return
 
     session = create_retry_session()
+    openai_session = create_retry_session() if config.openai_admin_key else None
     timezone = pytz.timezone(settings.timezone_name)
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
@@ -714,6 +972,9 @@ def main() -> None:
 
     try:
         state.last_update_id = init_last_update_id(session, config, settings)
+        if openai_session:
+            refresh_openai_usage(openai_session, config, state)
+            start_openai_usage_worker(openai_session, config, state, settings.openai_refresh_seconds)
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl
@@ -735,38 +996,38 @@ def main() -> None:
             session,
             config,
             settings,
+            ASCII_STARTUP_BANNER,
+            state=state,
+            force_send=True,
+        )
+
+        send_telegram_message(
+            session,
+            config,
+            settings,
             "🤖 Binance PnL bot started and is ready!",
             state=state,
             force_send=True,
         )
 
         now_dt = datetime.datetime.now(state.timezone)
+        status_info = get_system_info_text(settings, show_all=True)
+        openai_line = build_openai_status_line(state) if config.openai_admin_key else None
         send_telegram_message(
             session,
             config,
             settings,
-            "🧭 Status:\n"
-            f"• Running: `{state.is_running}`\n"
-            f"• Local time: `{now_dt:%H:%M}`\n"
-            f"• Interval: `{state.interval_seconds}s`\n"
-            f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)\n"
-            f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`\n"
-            f"• Current PnL: `{pnl} USDT`\n",
+            compose_status_message(state, status_info, pnl, local_time=now_dt, openai_line=openai_line),
             state=state,
             force_send=True,
         )
-
-        sysinfo = get_system_info_text(settings, show_all=True)
-        if sysinfo:
-            send_telegram_message(session, config, settings, sysinfo, state=state, force_send=True)
-        else:
-            send_telegram_message(session, config, settings, "No system information available.", state=state, force_send=True)
 
         last_run = time.time()
         while True:
             poll_timeout = min(settings.telegram_poll_timeout, max(1, state.interval_seconds // 2))
             state.last_update_id = check_telegram_commands(
                 session,
+                openai_session,
                 config,
                 settings,
                 state,

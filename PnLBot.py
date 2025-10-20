@@ -208,7 +208,6 @@ def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_
 
 
 def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, key: str, tzinfo: datetime.tzinfo):
-    send_telegram_message(session, config, settings, "Retrieving OpenAI usage, please wait ... it might take a while.")
     now_local = datetime.datetime.now(tzinfo)
     month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_start_epoch = epoch_utc(month_start_local)
@@ -663,7 +662,20 @@ def check_telegram_commands(
                 state.min_pnl = min(state.min_pnl, pnl)
                 state_changed = prev_max != state.max_pnl or prev_min != state.min_pnl
             status_info = get_system_info_text(settings, show_all=True)
-            openai_line = build_openai_status_line(state) if config.openai_admin_key else None
+            if config.openai_admin_key:
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    "Retrieving OpenAI usage, please wait ... it might take a while.",
+                    state=state,
+                    force_send=True,
+                )
+                usage_session = openai_session or session
+                refresh_openai_usage(usage_session, config, settings, state)
+                openai_line = build_openai_status_line(state)
+            else:
+                openai_line = None
             send_telegram_message(
                 session,
                 config,
@@ -750,6 +762,14 @@ def check_telegram_commands(
                     force_send=True,
                 )
                 continue
+            send_telegram_message(
+                session,
+                config,
+                settings,
+                "Retrieving OpenAI usage, please wait ... it might take a while.",
+                state=state,
+                force_send=True,
+            )
             usage_session = openai_session or session
             refresh_openai_usage(usage_session, config, settings, state)
             with state.openai_usage_lock:

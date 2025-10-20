@@ -207,8 +207,8 @@ def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_
     return total_requests, total_tokens
 
 
-def retrieve_openai_usage(session: requests.Session, key: str, tzinfo: datetime.tzinfo):
-    print(f"Retrieving OpenAI usage, please wait ... it might take a while.")
+def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, key: str, tzinfo: datetime.tzinfo):
+    send_telegram_message(session, config, settings, "Retrieving OpenAI usage, please wait ... it might take a while.")
     now_local = datetime.datetime.now(tzinfo)
     month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_start_epoch = epoch_utc(month_start_local)
@@ -267,13 +267,13 @@ def format_openai_usage_report(usage: dict) -> str:
     )
 
 
-def refresh_openai_usage(session: requests.Session, config: EnvConfig, state: BotState) -> Optional[dict]:
+def refresh_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> Optional[dict]:
     if not config.openai_admin_key:
         return None
 
     with state.openai_usage_lock:
         try:
-            usage = retrieve_openai_usage(session, config.openai_admin_key, state.timezone)
+            usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, state.timezone)
         except requests.RequestException as exc:
             state.openai_usage = None
             state.openai_usage_error = f"OpenAI usage unavailable: {exc}"
@@ -289,7 +289,7 @@ def refresh_openai_usage(session: requests.Session, config: EnvConfig, state: Bo
 
 
 def start_openai_usage_worker(
-    session: requests.Session, config: EnvConfig, state: BotState, interval_seconds: int
+    session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState, interval_seconds: int
 ) -> Optional[threading.Thread]:
     if not config.openai_admin_key:
         return None
@@ -298,7 +298,7 @@ def start_openai_usage_worker(
 
     def worker():
         while True:
-            refresh_openai_usage(session, config, state)
+            refresh_openai_usage(session, config, settings, state)
             time.sleep(interval)
 
     thread = threading.Thread(target=worker, name="openai-usage-worker", daemon=True)
@@ -491,6 +491,7 @@ def get_system_info_text(settings: BotSettings, show_all: bool = False) -> Optio
 
 def send_telegram_message(
     session: requests.Session,
+
     config: EnvConfig,
     settings: BotSettings,
     message: str,
@@ -750,7 +751,7 @@ def check_telegram_commands(
                 )
                 continue
             usage_session = openai_session or session
-            refresh_openai_usage(usage_session, config, state)
+            refresh_openai_usage(usage_session, config, settings, state)
             with state.openai_usage_lock:
                 usage = state.openai_usage
                 error = state.openai_usage_error
@@ -973,8 +974,8 @@ def main() -> None:
     try:
         state.last_update_id = init_last_update_id(session, config, settings)
         if openai_session:
-            refresh_openai_usage(openai_session, config, state)
-            start_openai_usage_worker(openai_session, config, state, settings.openai_refresh_seconds)
+            refresh_openai_usage(openai_session, config, settings, state)
+            start_openai_usage_worker(openai_session, config, settings, state, settings.openai_refresh_seconds)
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl
@@ -1005,7 +1006,7 @@ def main() -> None:
             session,
             config,
             settings,
-            "🤖 Binance PnL bot started and is ready!",
+            "🤖 Binance PnL bot is starting...",
             state=state,
             force_send=True,
         )

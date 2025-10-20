@@ -1,0 +1,15 @@
+[Service]
+ExecStart=/usr/bin/python3 <your_path>/PnLBot.py
+EnvironmentFile=<your_path>/.env
+Restart=always
+RestartSec=5
+User=<your_user>
+WorkingDirectory=<your_path>/
+StandardOutput=append:<your_path>/pnlbot.log
+StandardError=append:<your_path>/pnlbot.log
+Environment=LOG_DATE=$(date)
+StartLimitBurst=5
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

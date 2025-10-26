@@ -10,7 +10,9 @@ A Telegram-enabled helper that fetches Binance Futures unrealized PnL on a sched
 
 ## Configuration
 
-All runtime options can be controlled with environment variables. Defaults are shown in parentheses.
+All runtime options are still controlled with environment variables (defaults shown in parentheses),
+but any value can also be inspected or overridden live with the `/config` Telegram command. Values
+set at runtime are persisted to the state file so they survive restarts.
 
 - `API_KEY`, `API_SECRET` – Binance credentials (required)
 - `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` – Telegram bot credentials (required)
@@ -45,18 +47,24 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 ## Telegram Commands
 
-- `/setinterval <seconds>` – update the reporting interval (10-3600)
-- `/setlimit <min> <max>` – update unrealized PnL alert bounds
+**Information**
+
 - `/status` – full status report including system metrics
-- `/start`, `/stop` – resume or pause automatic monitoring
 - `/pnl` – fetch the latest unrealized PnL immediately
-- `/openai` – report OpenAI month-to-date cost, usage, and last month total (`/openaiusage` alias)
-- `/nightmode on|off` – toggle quiet hours
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display current CPU, RAM, and disk usage
-- `/todo <text>` – append to the local TODO list
 - `/showtodo` – display the TODO list contents
+- `/openai` – report OpenAI month-to-date cost, usage, and last month total (`/openaiusage` alias)
 - `/help` – command reference
+
+**Configuration & Actions**
+
+- `/config show|get|set` – inspect or update any runtime parameter
+- `/setinterval <seconds>` – update the reporting interval (10-3600)
+- `/setlimit <min> <max>` – update unrealized PnL alert bounds
+- `/nightmode on|off` – toggle quiet hours
+- `/start`, `/stop` – resume or pause automatic monitoring
+- `/todo <text>` – append to the local TODO list
 
 ## Files Created
 

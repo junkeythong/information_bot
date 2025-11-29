@@ -51,6 +51,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 - `/status` – full status report including system metrics
 - `/pnl` – fetch the latest unrealized PnL immediately
+- `/spot` – fetch the current Spot wallet USDT balance
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display current CPU, RAM, and disk usage
 - `/showtodo` – display the TODO list contents

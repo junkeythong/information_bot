@@ -343,6 +343,7 @@ def compose_status_message(
     *,
     local_time: Optional[datetime.datetime] = None,
     openai_line: Optional[str] = None,
+    spot_balance: Optional[Union[float, str]] = None,
 ) -> str:
     info = status_info or "No system information available."
     lines = [
@@ -352,6 +353,12 @@ def compose_status_message(
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
     ]
+    if spot_balance is not None:
+        if isinstance(spot_balance, (int, float)):
+            lines.append(f"• Spot Balance: `{spot_balance:,.2f} USDT`")
+        else:
+            lines.append(f"• Spot Balance: `{spot_balance}`")
+
     if isinstance(current_pnl, (int, float)):
         lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT`")
     else:
@@ -559,6 +566,50 @@ def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[float
         return round(total_unrealized_pnl, 2)
     except Exception as exc:
         return f"PnL fetch error: {exc}"
+
+
+def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[float, str]:
+    base_url = "https://api.binance.com"
+    endpoint = "/api/v3/account"
+    timestamp = int(time.time() * 1000)
+    query_string = f"timestamp={timestamp}"
+    signature = hmac.new(config.api_secret.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    url = f"{base_url}{endpoint}?{query_string}&signature={signature}"
+    headers = {"X-MBX-APIKEY": config.api_key}
+
+    try:
+        # 1. Get Account Balances
+        response = session.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        balances = data.get("balances", [])
+
+        # 2. Get Current Prices
+        price_url = "https://api.binance.com/api/v3/ticker/price"
+        price_response = session.get(price_url, timeout=10)
+        price_response.raise_for_status()
+        prices = {item["symbol"]: float(item["price"]) for item in price_response.json()}
+
+        total_usdt = 0.0
+        for balance in balances:
+            asset = balance.get("asset")
+            free = float(balance.get("free", 0.0))
+            locked = float(balance.get("locked", 0.0))
+            amount = free + locked
+
+            if amount <= 0:
+                continue
+
+            if asset == "USDT":
+                total_usdt += amount
+            else:
+                symbol = f"{asset}USDT"
+                if symbol in prices:
+                    total_usdt += amount * prices[symbol]
+
+        return round(total_usdt, 2)
+    except Exception as exc:
+        return f"Spot balance fetch error: {exc}"
 
 
 def get_top_processes(n: int = 5) -> Tuple[str, str]:
@@ -1048,6 +1099,7 @@ def check_telegram_commands(
             )
         elif text == "/status":
             pnl = get_futures_pnl(session, config)
+            spot_balance = get_spot_balance(session, config)
             state_changed = False
             if isinstance(pnl, (int, float)):
                 prev_max = state.max_pnl
@@ -1074,7 +1126,7 @@ def check_telegram_commands(
                 session,
                 config,
                 settings,
-                compose_status_message(state, status_info, pnl, openai_line=openai_line),
+                compose_status_message(state, status_info, pnl, openai_line=openai_line, spot_balance=spot_balance),
                 state=state,
                 force_send=True,
             )
@@ -1183,6 +1235,19 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
+        elif text == "/spot":
+            spot_balance = get_spot_balance(session, config)
+            if isinstance(spot_balance, (int, float)):
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    f"💰 Spot USDT Balance: {spot_balance:,.2f} USDT",
+                    state=state,
+                    force_send=True,
+                )
+            else:
+                send_telegram_message(session, config, settings, spot_balance, state=state, force_send=True)
         elif text == "/uptime":
             send_telegram_message(
                 session,
@@ -1261,6 +1326,7 @@ def check_telegram_commands(
                 "*ℹ️ Info commands:*\n"
                 "• `/status` – Current configuration, metrics, and PnL snapshot\n"
                 "• `/pnl` – Latest unrealized PnL\n"
+                "• `/spot` – Spot wallet USDT balance\n"
                 "• `/uptime` – Bot running time\n"
                 "• `/sysinfo` – CPU, RAM, and disk utilisation\n"
                 "• `/showtodo` – Display the TODO list\n"
@@ -1291,6 +1357,8 @@ def check_telegram_commands(
 
 def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> None:
     pnl = get_futures_pnl(session, config)
+    spot_balance = get_spot_balance(session, config)
+
     if isinstance(pnl, str):
         send_telegram_message(session, config, settings, pnl, state=state, force_send=True)
         return
@@ -1303,12 +1371,15 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
     if pnl <= 0:
         state.min_pnl = min(state.min_pnl, pnl)
 
+    # Format spot balance message
+    spot_msg = f"💰 Spot: {spot_balance:,.2f} USDT\n" if isinstance(spot_balance, (int, float)) else f"⚠️ {spot_balance}\n"
+
     if pnl <= state.pnl_alert_low:
         send_telegram_message(
             session,
             config,
             settings,
-            f"Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     elif pnl >= state.pnl_alert_high:
@@ -1316,7 +1387,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     else:
@@ -1324,7 +1395,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"{pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}{pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
 
@@ -1421,6 +1492,9 @@ def main() -> None:
             force_send=True,
         )
 
+        # Fetch spot balance at startup
+        spot_balance = get_spot_balance(session, config)
+
         now_dt = datetime.datetime.now(state.timezone)
         status_info = get_system_info_text(settings, show_all=True)
         openai_line = build_openai_status_line(state) if config.openai_admin_key else None
@@ -1428,7 +1502,7 @@ def main() -> None:
             session,
             config,
             settings,
-            compose_status_message(state, status_info, pnl, local_time=now_dt, openai_line=openai_line),
+            compose_status_message(state, status_info, pnl, local_time=now_dt, openai_line=openai_line, spot_balance=spot_balance),
             state=state,
             force_send=True,
         )

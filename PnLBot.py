@@ -1379,7 +1379,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"{spot_msg}Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     elif pnl >= state.pnl_alert_high:
@@ -1387,7 +1387,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"{spot_msg}High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     else:

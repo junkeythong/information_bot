@@ -24,7 +24,6 @@ ASCII_STARTUP_BANNER = (
     " short it!\n"
     "```"
 )
-OPENAI_REFRESH_DEFAULT_SECONDS = 300
 STATE_FILE_PATH = "pnl-bot-state.json"
 TODO_FILE_PATH = "pnl-bot-todo-db.txt"
 TELEGRAM_API_URL = "https://api.telegram.org"
@@ -603,11 +602,7 @@ def send_telegram_message(
     state: Optional[BotState] = None,
     force_send: bool = False,
 ) -> None:
-    tz = None
-    if state:
-        tz = pytz.timezone(TIMEZONE_NAME)
-    else:
-        tz = pytz.timezone(TIMEZONE_NAME)
+    tz = pytz.timezone(TIMEZONE_NAME)
 
     now_hour = datetime.datetime.now(tz).hour
     if state and state.night_mode_enabled and not force_send:
@@ -1258,7 +1253,6 @@ def main() -> None:
 
     session = create_retry_session()
     openai_session = create_retry_session() if config.openai_admin_key else None
-    timezone = pytz.timezone(TIMEZONE_NAME)
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
         night_mode_enabled=settings.default_night_mode_enabled,

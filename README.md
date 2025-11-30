@@ -23,16 +23,6 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` (true) – enable quiet hours on start
 - `PNL_BOT_NIGHT_MODE_START_HOUR` (0) – start of quiet window (0-23)
 - `PNL_BOT_NIGHT_MODE_END_HOUR` (5) – end of quiet window (1-24)
-- `PNL_BOT_TIMEZONE` (Asia/Ho_Chi_Minh) – IANA timezone for scheduling and uptime
-- `PNL_BOT_TODO_FILE` (pnl-bot-todo-db.txt) – path for persisted TODO entries
-- `PNL_BOT_TELEGRAM_MAX_MESSAGE` (4096) – message chunk size for Telegram
-- `PNL_BOT_TELEGRAM_API_URL` (https://api.telegram.org) – Telegram API base URL
-- `PNL_BOT_CPU_ALERT_THRESHOLD` (80) – CPU percentage that triggers system alerts
-- `PNL_BOT_MEMORY_ALERT_THRESHOLD` (80) – RAM percentage that triggers system alerts
-- `PNL_BOT_DISK_ALERT_THRESHOLD` (90) – disk percentage that triggers system alerts
-- `PNL_BOT_TELEGRAM_POLL_TIMEOUT` (25) – long-poll duration when reading commands
-- `PNL_BOT_STATE_FILE` (pnl-bot-state.json) – path used to persist runtime settings
-- `PNL_BOT_OPENAI_REFRESH_SECONDS` (300) – cadence for background OpenAI usage refreshes
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -42,7 +32,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - Long-polls Telegram for commands and updates `update_id` tracking automatically
 - Persists editable runtime settings (interval, thresholds, run state, PnL bounds) to the JSON state file whenever they change
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
-- CPU/RAM/disk alert thresholds are configurable and included in status messages
+- CPU/RAM/disk alert thresholds are hardcoded and included in status messages
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost/usage in the background; `/openai` forces a new fetch and includes the latest API window end time
 
 ## Telegram Commands
@@ -67,11 +57,15 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/start`, `/stop` – resume or pause automatic monitoring
 - `/todo <text>` – append to the local TODO list
 
-## Files Created
+## Files & Constants
 
 - PnL bot script: `PnLBot.py`
-- State snapshot: `PNL_BOT_STATE_FILE` (default `pnl-bot-state.json`)
-- TODO entries: `PNL_BOT_TODO_FILE` (default `pnl-bot-todo-db.txt`)
+- State snapshot: `pnl-bot-state.json` (hardcoded)
+- TODO entries: `pnl-bot-todo-db.txt` (hardcoded)
+- Timezone: `Asia/Ho_Chi_Minh` (hardcoded)
+- System Alerts: CPU/RAM 80%, Disk 90% (hardcoded)
+- Telegram: Poll 25s, Max Msg 4096 (hardcoded)
+- OpenAI Refresh: 300s (hardcoded)
 
 ## Quick Start
 

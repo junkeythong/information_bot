@@ -25,6 +25,16 @@ ASCII_STARTUP_BANNER = (
     "```"
 )
 OPENAI_REFRESH_DEFAULT_SECONDS = 300
+STATE_FILE_PATH = "pnl-bot-state.json"
+TODO_FILE_PATH = "pnl-bot-todo-db.txt"
+TELEGRAM_API_URL = "https://api.telegram.org"
+TIMEZONE_NAME = "Asia/Ho_Chi_Minh"
+SYSTEM_CPU_ALERT_THRESHOLD = 80
+SYSTEM_MEMORY_ALERT_THRESHOLD = 80
+SYSTEM_DISK_ALERT_THRESHOLD = 90
+TELEGRAM_POLL_TIMEOUT = 25
+TELEGRAM_MAX_MESSAGE = 4096
+OPENAI_REFRESH_SECONDS = 300
 
 
 def env_str(name: str, default: str) -> str:
@@ -56,16 +66,6 @@ class BotSettings:
     default_pnl_alert_high: int
     default_night_mode_enabled: bool
     night_mode_window: Tuple[int, int]
-    timezone_name: str
-    todo_db_file: str
-    telegram_max_message: int
-    telegram_api_url: str
-    system_cpu_alert_threshold: int
-    system_memory_alert_threshold: int
-    system_disk_alert_threshold: int
-    telegram_poll_timeout: int
-    state_store_file: str
-    openai_refresh_seconds: int
 
 
 def load_bot_settings() -> BotSettings:
@@ -74,23 +74,12 @@ def load_bot_settings() -> BotSettings:
     default_high = env_int("PNL_BOT_DEFAULT_PNL_ALERT_HIGH", 20)
     night_mode_start = env_int("PNL_BOT_NIGHT_MODE_START_HOUR", 0)
     night_mode_end = env_int("PNL_BOT_NIGHT_MODE_END_HOUR", 5)
+    default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
     if not (0 <= night_mode_start <= 23 and 0 <= night_mode_end <= 24):
         raise RuntimeError("Night mode hours must be within 0-24 range")
     if night_mode_start == night_mode_end:
         raise RuntimeError("Night mode start and end hours must differ")
     night_mode_window = (night_mode_start, night_mode_end)
-
-    timezone_name = env_str("PNL_BOT_TIMEZONE", "Asia/Ho_Chi_Minh")
-    todo_db_file = env_str("PNL_BOT_TODO_FILE", "pnl-bot-todo-db.txt")
-    telegram_max_message = env_int("PNL_BOT_TELEGRAM_MAX_MESSAGE", 4096)
-    telegram_api_url = env_str("PNL_BOT_TELEGRAM_API_URL", "https://api.telegram.org")
-    cpu_threshold = env_int("PNL_BOT_CPU_ALERT_THRESHOLD", 80)
-    memory_threshold = env_int("PNL_BOT_MEMORY_ALERT_THRESHOLD", 80)
-    disk_threshold = env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 90)
-    poll_timeout = env_int("PNL_BOT_TELEGRAM_POLL_TIMEOUT", 25)
-    state_store_file = env_str("PNL_BOT_STATE_FILE", "pnl-bot-state.json")
-    default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
-    openai_refresh_seconds = env_int("PNL_BOT_OPENAI_REFRESH_SECONDS", OPENAI_REFRESH_DEFAULT_SECONDS)
 
     return BotSettings(
         default_interval_seconds=default_interval,
@@ -98,16 +87,6 @@ def load_bot_settings() -> BotSettings:
         default_pnl_alert_high=default_high,
         default_night_mode_enabled=default_night_mode,
         night_mode_window=night_mode_window,
-        timezone_name=timezone_name,
-        todo_db_file=todo_db_file,
-        telegram_max_message=telegram_max_message,
-        telegram_api_url=telegram_api_url,
-        system_cpu_alert_threshold=cpu_threshold,
-        system_memory_alert_threshold=memory_threshold,
-        system_disk_alert_threshold=disk_threshold,
-        telegram_poll_timeout=poll_timeout,
-        state_store_file=state_store_file,
-        openai_refresh_seconds=openai_refresh_seconds,
     )
 
 
@@ -126,7 +105,6 @@ class BotState:
     night_mode_enabled: bool
     pnl_alert_low: int
     pnl_alert_high: int
-    timezone: datetime.tzinfo
     night_mode_window: Tuple[int, int]
     is_running: bool = True
     last_update_id: Optional[int] = None
@@ -239,7 +217,9 @@ def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_
 
 
 def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, key: str, tzinfo: datetime.tzinfo):
-    now_local = datetime.datetime.now(tzinfo)
+    # Ignore tzinfo argument and use global constant
+    tz = pytz.timezone(TIMEZONE_NAME)
+    now_local = datetime.datetime.now(tz)
     month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_start_epoch = epoch_utc(month_start_local)
     current_epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + 1
@@ -303,7 +283,8 @@ def refresh_openai_usage(session: requests.Session, config: EnvConfig, settings:
 
     with state.openai_usage_lock:
         try:
-            usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, state.timezone)
+            # Pass None or dummy for tzinfo as retrieve_openai_usage now uses global constant
+            usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, None)
         except requests.RequestException as exc:
             state.openai_usage = None
             state.openai_usage_error = f"OpenAI usage unavailable: {exc}"
@@ -328,7 +309,7 @@ def start_openai_usage_worker(
         sleep_interval = max(60, interval_seconds)
         while True:
             refresh_openai_usage(session, config, settings, state)
-            sleep_interval = max(60, settings.openai_refresh_seconds)
+            sleep_interval = max(60, OPENAI_REFRESH_SECONDS)
             time.sleep(sleep_interval)
 
     thread = threading.Thread(target=worker, name="openai-usage-worker", daemon=True)
@@ -463,40 +444,6 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         except (TypeError, ValueError):
             pass
 
-    overrides = persisted.get("settings_overrides", {})
-
-    timezone_name = overrides.get("timezone_name") or state_data.get("timezone_name")
-    if isinstance(timezone_name, str):
-        try:
-            state.timezone = pytz.timezone(timezone_name)
-            settings.timezone_name = timezone_name
-        except Exception:
-            pass
-
-    integer_override_keys = {
-        "system_cpu_alert_threshold",
-        "system_memory_alert_threshold",
-        "system_disk_alert_threshold",
-        "telegram_max_message",
-        "telegram_poll_timeout",
-        "openai_refresh_seconds",
-    }
-
-    for key, value in overrides.items():
-        if key == "timezone_name":
-            continue
-        if key in integer_override_keys:
-            setattr(settings, key, _safe_int(value, getattr(settings, key)))
-        elif key == "todo_db_file":
-            if isinstance(value, str) and value:
-                settings.todo_db_file = value
-                ensure_todo_file_exists(value)
-        elif key == "state_store_file":
-            if isinstance(value, str) and value:
-                settings.state_store_file = value
-        elif hasattr(settings, key):
-            setattr(settings, key, value)
-
 
 def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> None:
     state_data = {
@@ -508,23 +455,9 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "max_pnl": state.max_pnl,
         "min_pnl": state.min_pnl,
         "night_mode_window": list(state.night_mode_window),
-        "timezone_name": getattr(state.timezone, "zone", settings.timezone_name),
-    }
-    settings_overrides = {
-        "timezone_name": settings.timezone_name,
-        "system_cpu_alert_threshold": settings.system_cpu_alert_threshold,
-        "system_memory_alert_threshold": settings.system_memory_alert_threshold,
-        "system_disk_alert_threshold": settings.system_disk_alert_threshold,
-        "telegram_max_message": settings.telegram_max_message,
-        "telegram_api_url": settings.telegram_api_url,
-        "todo_db_file": settings.todo_db_file,
-        "telegram_poll_timeout": settings.telegram_poll_timeout,
-        "openai_refresh_seconds": settings.openai_refresh_seconds,
-        "state_store_file": settings.state_store_file,
     }
     payload = {
         "state": state_data,
-        "settings_overrides": settings_overrides,
     }
 
     tmp_path = f"{path}.tmp"
@@ -638,9 +571,9 @@ def get_system_info_text(settings: BotSettings, show_all: bool = False) -> Optio
     disk = psutil.disk_usage("/").percent
 
     is_alert = (
-        cpu > settings.system_cpu_alert_threshold
-        or mem > settings.system_memory_alert_threshold
-        or disk > settings.system_disk_alert_threshold
+        cpu > SYSTEM_CPU_ALERT_THRESHOLD
+        or mem > SYSTEM_MEMORY_ALERT_THRESHOLD
+        or disk > SYSTEM_DISK_ALERT_THRESHOLD
     )
     if not show_all and not is_alert:
         return None
@@ -649,9 +582,9 @@ def get_system_info_text(settings: BotSettings, show_all: bool = False) -> Optio
     title = "*🖥 System Alert:*" if is_alert else "*📊 Current system metrics:*"
     info_lines.append(title)
 
-    info_lines.append(f"• CPU: `{cpu}%` (alert when > {settings.system_cpu_alert_threshold}%)")
-    info_lines.append(f"• RAM: `{mem}%` (alert when > {settings.system_memory_alert_threshold}%)")
-    info_lines.append(f"• Disk: `{disk}%` (alert when > {settings.system_disk_alert_threshold}%)")
+    info_lines.append(f"• CPU: `{cpu}%` (alert when > {SYSTEM_CPU_ALERT_THRESHOLD}%)")
+    info_lines.append(f"• RAM: `{mem}%` (alert when > {SYSTEM_MEMORY_ALERT_THRESHOLD}%)")
+    info_lines.append(f"• Disk: `{disk}%` (alert when > {SYSTEM_DISK_ALERT_THRESHOLD}%)")
 
     top_cpu, top_mem = get_top_processes()
     info_lines.append("\n*⚙️ Top CPU processes:*\n" + top_cpu)
@@ -672,9 +605,9 @@ def send_telegram_message(
 ) -> None:
     tz = None
     if state:
-        tz = state.timezone
+        tz = pytz.timezone(TIMEZONE_NAME)
     else:
-        tz = pytz.timezone(settings.timezone_name)
+        tz = pytz.timezone(TIMEZONE_NAME)
 
     now_hour = datetime.datetime.now(tz).hour
     if state and state.night_mode_enabled and not force_send:
@@ -686,18 +619,18 @@ def send_telegram_message(
             if now_hour >= start_hour or now_hour < end_hour:
                 return
 
-    url = f"{settings.telegram_api_url}/bot{config.telegram_token}/sendMessage"
+    url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/sendMessage"
     payload = {
         "chat_id": config.telegram_chat_id,
         "text": message,
         "parse_mode": "Markdown",
     }
     try:
-        if len(message) > settings.telegram_max_message:
-            for idx in range(0, len(message), settings.telegram_max_message):
+        if len(message) > TELEGRAM_MAX_MESSAGE:
+            for idx in range(0, len(message), TELEGRAM_MAX_MESSAGE):
                 session.post(
                     url,
-                    data={**payload, "text": message[idx : idx + settings.telegram_max_message]},
+                    data={**payload, "text": message[idx : idx + TELEGRAM_MAX_MESSAGE]},
                     timeout=10,
                 )
         else:
@@ -772,23 +705,6 @@ def _apply_night_mode_end(value: int, state: BotState, settings: BotSettings) ->
     state.night_mode_active = False
 
 
-def _parse_timezone(raw: str, _: BotState, __: BotSettings) -> str:
-    tz_name = raw.strip()
-    if not tz_name:
-        raise ValueError("Timezone name cannot be empty")
-    try:
-        pytz.timezone(tz_name)
-    except Exception as exc:
-        raise ValueError("Unknown timezone") from exc
-    return tz_name
-
-
-def _apply_timezone(tz_name: str, state: BotState, settings: BotSettings) -> None:
-    timezone = pytz.timezone(tz_name)
-    state.timezone = timezone
-    settings.timezone_name = tz_name
-
-
 def _apply_bool(attribute: str) -> Callable[[bool, BotState, BotSettings], None]:
     def _inner(val: bool, state: BotState, settings: BotSettings) -> None:
         setattr(state, attribute, val)
@@ -796,45 +712,12 @@ def _apply_bool(attribute: str) -> Callable[[bool, BotState, BotSettings], None]
             state.night_mode_active = False
     return _inner
 
-
-def _parse_string(raw: str) -> str:
-    value = raw.strip()
-    if not value:
-        raise ValueError("Value cannot be empty")
-    return value
-
-
-def _set_todo_path(path: str, settings: BotSettings) -> None:
-    settings.todo_db_file = path
-    ensure_todo_file_exists(path)
-
-
-def _set_state_store_file(path: str, state: BotState, settings: BotSettings) -> Optional[str]:
-    old_path = settings.state_store_file
-    settings.state_store_file = path
-    if old_path and old_path != path:
-        persist_runtime_state(old_path, state, settings)
-        return f"Legacy state saved to `{old_path}`"
-    return None
-
-
 CONFIG_ORDER = [
     "interval_seconds",
     "pnl_alert_low",
     "pnl_alert_high",
     "night_mode_enabled",
     "night_mode_start_hour",
-    "night_mode_end_hour",
-    "timezone",
-    "system_cpu_alert_threshold",
-    "system_memory_alert_threshold",
-    "system_disk_alert_threshold",
-    "telegram_poll_timeout",
-    "telegram_max_message",
-    "telegram_api_url",
-    "todo_db_file",
-    "state_store_file",
-    "openai_refresh_seconds",
 ]
 
 
@@ -874,66 +757,6 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         parser=_parse_night_mode_end,
         getter=lambda state, settings: state.night_mode_window[1],
         applier=_apply_night_mode_end,
-    ),
-    "timezone": ConfigDefinition(
-        description="IANA timezone used for scheduling",
-        parser=_parse_timezone,
-        getter=lambda state, settings: settings.timezone_name,
-        applier=_apply_timezone,
-    ),
-    "system_cpu_alert_threshold": ConfigDefinition(
-        description="CPU usage percentage that triggers alerts",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=1, maximum=100),
-        getter=lambda state, settings: settings.system_cpu_alert_threshold,
-        applier=lambda value, state, settings: setattr(settings, "system_cpu_alert_threshold", value),
-    ),
-    "system_memory_alert_threshold": ConfigDefinition(
-        description="RAM usage percentage that triggers alerts",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=1, maximum=100),
-        getter=lambda state, settings: settings.system_memory_alert_threshold,
-        applier=lambda value, state, settings: setattr(settings, "system_memory_alert_threshold", value),
-    ),
-    "system_disk_alert_threshold": ConfigDefinition(
-        description="Disk usage percentage that triggers alerts",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=1, maximum=100),
-        getter=lambda state, settings: settings.system_disk_alert_threshold,
-        applier=lambda value, state, settings: setattr(settings, "system_disk_alert_threshold", value),
-    ),
-    "telegram_poll_timeout": ConfigDefinition(
-        description="Telegram long-poll timeout in seconds",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=1, maximum=60),
-        getter=lambda state, settings: settings.telegram_poll_timeout,
-        applier=lambda value, state, settings: setattr(settings, "telegram_poll_timeout", value),
-    ),
-    "telegram_max_message": ConfigDefinition(
-        description="Maximum Telegram message chunk size",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=256, maximum=4096),
-        getter=lambda state, settings: settings.telegram_max_message,
-        applier=lambda value, state, settings: setattr(settings, "telegram_max_message", value),
-    ),
-    "telegram_api_url": ConfigDefinition(
-        description="Telegram API base URL",
-        parser=lambda raw, state, settings: _parse_string(raw),
-        getter=lambda state, settings: settings.telegram_api_url,
-        applier=lambda value, state, settings: setattr(settings, "telegram_api_url", value),
-    ),
-    "todo_db_file": ConfigDefinition(
-        description="Path to the TODO persistence file",
-        parser=lambda raw, state, settings: _parse_string(raw),
-        getter=lambda state, settings: settings.todo_db_file,
-        applier=lambda value, state, settings: _set_todo_path(value, settings),
-    ),
-    "state_store_file": ConfigDefinition(
-        description="Path to the runtime state file",
-        parser=lambda raw, state, settings: _parse_string(raw),
-        getter=lambda state, settings: settings.state_store_file,
-        applier=_set_state_store_file,
-    ),
-    "openai_refresh_seconds": ConfigDefinition(
-        description="Background refresh cadence for OpenAI usage",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=60),
-        getter=lambda state, settings: settings.openai_refresh_seconds,
-        applier=lambda value, state, settings: setattr(settings, "openai_refresh_seconds", value),
     ),
 }
 
@@ -981,7 +804,7 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings) -> 
         try:
             parsed_value = definition.parser(value_text, state, settings)
             result = definition.applier(parsed_value, state, settings)
-            persist_runtime_state(settings.state_store_file, state, settings)
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
             if isinstance(result, str) and result:
                 extra = f"\n{result}"
             else:
@@ -1004,7 +827,7 @@ def check_telegram_commands(
     last_update_id: Optional[int],
     poll_timeout: int,
 ) -> Optional[int]:
-    url = f"{settings.telegram_api_url}/bot{config.telegram_token}/getUpdates"
+    url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/getUpdates"
     params = {"timeout": poll_timeout}
     if last_update_id is not None:
         params["offset"] = last_update_id + 1
@@ -1043,7 +866,7 @@ def check_telegram_commands(
                 value = int(parts[1])
                 if 10 <= value <= 3600:
                     state.interval_seconds = value
-                    persist_runtime_state(settings.state_store_file, state, settings)
+                    persist_runtime_state(STATE_FILE_PATH, state, settings)
                     send_telegram_message(
                         session,
                         config,
@@ -1069,7 +892,7 @@ def check_telegram_commands(
                 if low_limit < high_limit:
                     state.pnl_alert_low = low_limit
                     state.pnl_alert_high = high_limit
-                    persist_runtime_state(settings.state_store_file, state, settings)
+                    persist_runtime_state(STATE_FILE_PATH, state, settings)
                     send_telegram_message(
                         session,
                         config,
@@ -1131,10 +954,10 @@ def check_telegram_commands(
                 force_send=True,
             )
             if state_changed:
-                persist_runtime_state(settings.state_store_file, state, settings)
+                persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text == "/stop":
             state.is_running = False
-            persist_runtime_state(settings.state_store_file, state, settings)
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
             send_telegram_message(
                 session,
                 config,
@@ -1145,7 +968,7 @@ def check_telegram_commands(
             )
         elif text == "/start":
             state.is_running = True
-            persist_runtime_state(settings.state_store_file, state, settings)
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
             send_telegram_message(
                 session,
                 config,
@@ -1156,7 +979,7 @@ def check_telegram_commands(
             )
         elif text == "/nightmode off":
             state.night_mode_enabled = False
-            persist_runtime_state(settings.state_store_file, state, settings)
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
             send_telegram_message(
                 session,
                 config,
@@ -1167,7 +990,7 @@ def check_telegram_commands(
             )
         elif text == "/nightmode on":
             state.night_mode_enabled = True
-            persist_runtime_state(settings.state_store_file, state, settings)
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
             send_telegram_message(
                 session,
                 config,
@@ -1189,14 +1012,14 @@ def check_telegram_commands(
                     session,
                     config,
                     settings,
-                    f"📊 PnL: {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+                    f"📊 PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`",
                     state=state,
                     force_send=True,
                 )
             else:
                 send_telegram_message(session, config, settings, pnl, state=state, force_send=True)
             if state_changed:
-                persist_runtime_state(settings.state_store_file, state, settings)
+                persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text in {"/openai", "/openaiusage"}:
             if not config.openai_admin_key:
                 send_telegram_message(
@@ -1271,7 +1094,7 @@ def check_telegram_commands(
             todo_item = text[len("/todo") :].strip()
             if todo_item:
                 try:
-                    append_todo(settings.todo_db_file, todo_item)
+                    append_todo(TODO_FILE_PATH, todo_item)
                     send_telegram_message(
                         session,
                         config,
@@ -1299,7 +1122,7 @@ def check_telegram_commands(
                     force_send=True,
                 )
         elif text == "/showtodo":
-            todos = read_todos(settings.todo_db_file)
+            todos = read_todos(TODO_FILE_PATH)
             if todos:
                 send_telegram_message(
                     session,
@@ -1395,12 +1218,12 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"{spot_msg}{pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}📊 Futures PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`",
             state=state,
         )
 
     if state.max_pnl != prev_max or state.min_pnl != prev_min:
-        persist_runtime_state(settings.state_store_file, state, settings)
+        persist_runtime_state(STATE_FILE_PATH, state, settings)
 
     system_info = get_system_info_text(settings)
     if system_info:
@@ -1409,7 +1232,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
 
 def init_last_update_id(session: requests.Session, config: EnvConfig, settings: BotSettings) -> Optional[int]:
     try:
-        url = f"{settings.telegram_api_url}/bot{config.telegram_token}/getUpdates"
+        url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/getUpdates"
         response = session.get(url, params={"timeout": 1}, timeout=6)
         response.raise_for_status()
         updates = response.json().get("result") or []
@@ -1435,28 +1258,28 @@ def main() -> None:
 
     session = create_retry_session()
     openai_session = create_retry_session() if config.openai_admin_key else None
-    timezone = pytz.timezone(settings.timezone_name)
+    timezone = pytz.timezone(TIMEZONE_NAME)
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
         night_mode_enabled=settings.default_night_mode_enabled,
         pnl_alert_low=settings.default_pnl_alert_low,
         pnl_alert_high=settings.default_pnl_alert_high,
-        timezone=timezone,
         night_mode_window=settings.night_mode_window,
     )
 
-    persisted = load_persisted_state(settings.state_store_file)
+    persisted = load_persisted_state(STATE_FILE_PATH)
     if persisted:
         apply_persisted_configuration(persisted, state, settings)
 
-    ensure_todo_file_exists(settings.todo_db_file)
+    ensure_todo_file_exists(TODO_FILE_PATH)
     atexit.register(lambda: notify_exit(session, config, settings))
 
     try:
         state.last_update_id = init_last_update_id(session, config, settings)
         if openai_session:
             refresh_openai_usage(openai_session, config, settings, state)
-            start_openai_usage_worker(openai_session, config, settings, state, settings.openai_refresh_seconds)
+
+            start_openai_usage_worker(openai_session, config, settings, state, OPENAI_REFRESH_SECONDS)
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl
@@ -1472,7 +1295,7 @@ def main() -> None:
             )
             pnl = 0.0
 
-        persist_runtime_state(settings.state_store_file, state, settings)
+        persist_runtime_state(STATE_FILE_PATH, state, settings)
 
         send_telegram_message(
             session,
@@ -1495,7 +1318,9 @@ def main() -> None:
         # Fetch spot balance at startup
         spot_balance = get_spot_balance(session, config)
 
-        now_dt = datetime.datetime.now(state.timezone)
+
+
+        now_dt = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
         status_info = get_system_info_text(settings, show_all=True)
         openai_line = build_openai_status_line(state) if config.openai_admin_key else None
         send_telegram_message(
@@ -1509,7 +1334,7 @@ def main() -> None:
 
         last_run = time.time()
         while True:
-            poll_timeout = min(settings.telegram_poll_timeout, max(1, state.interval_seconds // 2))
+            poll_timeout = min(TELEGRAM_POLL_TIMEOUT, max(1, state.interval_seconds // 2))
             state.last_update_id = check_telegram_commands(
                 session,
                 openai_session,
@@ -1520,7 +1345,7 @@ def main() -> None:
                 poll_timeout,
             )
 
-            tz_now = datetime.datetime.now(state.timezone)
+            tz_now = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
             start_hour, end_hour = state.night_mode_window
             if start_hour <= end_hour:
                 in_night_window = state.night_mode_enabled and start_hour <= tz_now.hour < end_hour
@@ -1553,7 +1378,7 @@ def main() -> None:
             now = time.time()
             if state.is_running and now - last_run >= state.interval_seconds:
                 monitor_loop(session, config, settings, state)
-                persist_runtime_state(settings.state_store_file, state, settings)
+                persist_runtime_state(STATE_FILE_PATH, state, settings)
                 last_run = now
 
     except Exception as exc:

@@ -2,6 +2,8 @@
 
 A Telegram-enabled helper that fetches Binance Futures unrealized PnL on a schedule, sends alert notifications, and reports host resource usage. The bot respects quiet hours, persists key runtime configuration, and supports a lightweight TODO list.
 
+It aims to be a simple bot and open for any integration, not stop here.
+
 ## Prerequisites
 
 - Python 3.9+

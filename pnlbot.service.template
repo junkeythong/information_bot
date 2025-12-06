@@ -9,7 +9,6 @@ StandardOutput=append:<your_path>/pnlbot.log
 StandardError=append:<your_path>/pnlbot.log
 Environment=LOG_DATE=$(date)
 StartLimitBurst=5
-RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

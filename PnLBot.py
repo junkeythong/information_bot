@@ -719,7 +719,7 @@ CONFIG_ORDER = [
 CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
     "interval_seconds": ConfigDefinition(
         description="PnL polling interval in seconds",
-        parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=3600),
+        parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
         getter=lambda state, settings: state.interval_seconds,
         applier=lambda value, state, settings: setattr(state, "interval_seconds", value),
     ),

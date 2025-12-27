@@ -255,24 +255,10 @@ def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings
 def format_openai_usage_report(usage: dict) -> str:
     mtd_cost_str = f"${usage['mtd_cost']:,.4f}"
     last_month_cost_str = f"${usage['last_month_cost']:,.4f}"
-    refreshed_at = usage.get("refreshed_at")
-    end_time_local = usage.get("end_time_local")
-    refreshed_str = (
-        f"`{refreshed_at:%Y-%m-%d %H:%M %Z}`" if isinstance(refreshed_at, datetime.datetime) else "`unknown`"
-    )
-    end_time_str = (
-        f"`{end_time_local:%Y-%m-%d %H:%M %Z}`" if isinstance(end_time_local, datetime.datetime) else "`unknown`"
-    )
     return (
-        "*📊 OpenAI Month-to-Date*\n"
-        f"• Period: `{usage['month_start_local']:%Y-%m-%d}` → now\n"
-        f"• Cost: `{mtd_cost_str}`\n"
-        f"• Requests: `{usage['mtd_requests']:,}`\n"
-        f"• Tokens: `{usage['mtd_tokens']:,}`\n"
-        f"• Last month: `{last_month_cost_str}` (`{usage['previous_month_start_local']:%Y-%m-%d}` → "
-        f"`{usage['previous_month_end_local']:%Y-%m-%d}`)\n"
-        f"• End time: {end_time_str}\n"
-        f"• Updated: {refreshed_str}"
+        "*📊 OpenAI Costs*\n"
+        f"• MTD Cost: `{mtd_cost_str}`\n"
+        f"• Last Month: `{last_month_cost_str}`"
     )
 
 
@@ -321,38 +307,56 @@ def compose_status_message(
     status_info: Optional[str],
     current_pnl: Union[float, str],
     *,
-    local_time: Optional[datetime.datetime] = None,
     openai_line: Optional[str] = None,
     spot_balance: Optional[Union[float, str]] = None,
 ) -> str:
-    info = status_info or "No system information available."
+    btc_price_str = ""
+    if isinstance(spot_balance, dict):
+        btc_price = spot_balance.get("btc_price", 0.0)
+        btc_price_str = f"\n• BTC Price: `{btc_price:,.2f} USDT`"
+
     lines = [
         "🧭 Status:",
         f"• Running: `{state.is_running}`",
         f"• Interval: `{state.interval_seconds}s`",
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
+        f"• Uptime: `{get_uptime(state)}`",
+        f"{btc_price_str}",
     ]
-    if spot_balance is not None:
-        if isinstance(spot_balance, (int, float)):
-            lines.append(f"• Spot Balance: `{spot_balance:,.2f} USDT`")
-        else:
-            lines.append(f"• Spot Balance: `{spot_balance}`")
+    if openai_line:
+        lines.append(openai_line)
 
+    lines.extend([
+        "",
+        "💰 *Spot Balance:*",
+    ])
+    if spot_balance is not None:
+        if isinstance(spot_balance, dict):
+            total = spot_balance.get("total", 0.0)
+            lines.append(f"• Total: `{total:,.2f} USDT`")
+            breakdown = spot_balance.get("breakdown", [])
+            for item in breakdown[:5]:  # Show top 5 assets
+                lines.append(f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT` ({item['amount']:.4f})")
+            if len(breakdown) > 5:
+                lines.append(f"  ▫️ ... and {len(breakdown)-5} more assets")
+        elif isinstance(spot_balance, (int, float)):
+            lines.append(f"• Total: `{spot_balance:,.2f} USDT`")
+        else:
+            lines.append(f"• {spot_balance}")
+
+    lines.extend([
+        "",
+        "📊 *Futures PnL:*",
+    ])
     if isinstance(current_pnl, (int, float)):
         lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT`")
     else:
         lines.append(f"• Current PnL: `{current_pnl}`")
     lines.extend([
         f"• Max PnL: `{state.max_pnl} USDT`, Min: `{state.min_pnl} USDT`",
-        f"• Uptime: `{get_uptime(state)}`",
     ])
-    if local_time is not None:
-        lines.insert(2, f"• Local time: `{local_time:%H:%M}`")
-    if openai_line:
-        lines.append(openai_line)
-    lines.append("")
-    lines.append(info)
+
     return "\n".join(lines)
 
 
@@ -362,18 +366,9 @@ def build_openai_status_line(state: BotState) -> Optional[str]:
         error = state.openai_usage_error
 
     if usage:
-        refreshed_at = usage.get("refreshed_at")
-        end_time_local = usage.get("end_time_local")
-        refreshed_str = (
-            f"{refreshed_at:%Y-%m-%d %H:%M %Z}" if isinstance(refreshed_at, datetime.datetime) else "unknown"
-        )
-        end_time_str = (
-            f"{end_time_local:%Y-%m-%d %H:%M %Z}" if isinstance(end_time_local, datetime.datetime) else "unknown"
-        )
         return (
             f"• OpenAI cost (MTD): `${usage['mtd_cost']:,.4f}` "
-            f"(last month `${usage['last_month_cost']:,.4f}`) "
-            f"[end `{end_time_str}` | updated `{refreshed_str}`]"
+            f"(last month `${usage['last_month_cost']:,.4f}`)"
         )
     if error:
         return f"• {error}"
@@ -500,7 +495,7 @@ def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[float
         return f"PnL fetch error: {exc}"
 
 
-def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[float, str]:
+def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[dict, str]:
     base_url = "https://api.binance.com"
     endpoint = "/api/v3/account"
     timestamp = int(time.time() * 1000)
@@ -523,6 +518,8 @@ def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[floa
         prices = {item["symbol"]: float(item["price"]) for item in price_response.json()}
 
         total_usdt = 0.0
+        breakdown = []
+
         for balance in balances:
             asset = balance.get("asset")
             free = float(balance.get("free", 0.0))
@@ -532,14 +529,35 @@ def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[floa
             if amount <= 0:
                 continue
 
+            asset_usdt_value = 0.0
             if asset == "USDT":
-                total_usdt += amount
+                asset_usdt_value = amount
             else:
                 symbol = f"{asset}USDT"
                 if symbol in prices:
-                    total_usdt += amount * prices[symbol]
+                    asset_usdt_value = amount * prices[symbol]
+                else:
+                    # Try getting price from other pairs if needed, but USDT is usually the base
+                    continue
 
-        return round(total_usdt, 2)
+            if asset_usdt_value < 0.01:  # Filter out dust
+                continue
+
+            total_usdt += asset_usdt_value
+            breakdown.append({
+                "asset": asset,
+                "amount": amount,
+                "usdt_value": asset_usdt_value
+            })
+
+        # Sort breakdown by USDT value descending
+        breakdown.sort(key=lambda x: x["usdt_value"], reverse=True)
+
+        return {
+            "total": round(total_usdt, 2),
+            "breakdown": breakdown,
+            "btc_price": prices.get("BTCUSDT", 0.0)
+        }
     except Exception as exc:
         return f"Spot balance fetch error: {exc}"
 
@@ -708,15 +726,23 @@ def _apply_bool(attribute: str) -> Callable[[bool, BotState, BotSettings], None]
     return _inner
 
 CONFIG_ORDER = [
+    "bot_running",
     "interval_seconds",
     "pnl_alert_low",
     "pnl_alert_high",
     "night_mode_enabled",
     "night_mode_start_hour",
+    "night_mode_end_hour",
 ]
 
 
 CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
+    "bot_running": ConfigDefinition(
+        description="Toggle bot activity",
+        parser=lambda raw, state, settings: parse_bool_value(raw),
+        getter=lambda state, settings: state.is_running,
+        applier=lambda value, state, settings: setattr(state, "is_running", value),
+    ),
     "interval_seconds": ConfigDefinition(
         description="PnL polling interval in seconds",
         parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
@@ -855,57 +881,7 @@ def check_telegram_commands(
         if chat_id != str(config.telegram_chat_id):
             continue
 
-        if text.startswith("/setinterval"):
-            parts = text.split()
-            if len(parts) == 2 and parts[1].isdigit():
-                value = int(parts[1])
-                if 10 <= value <= 3600:
-                    state.interval_seconds = value
-                    persist_runtime_state(STATE_FILE_PATH, state, settings)
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        f"⏱ Interval updated: {state.interval_seconds} seconds",
-                        state=state,
-                        force_send=True,
-                    )
-                else:
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        "❌ Interval must be between 10 and 3600 seconds.",
-                        state=state,
-                        force_send=True,
-                    )
-        elif text.startswith("/setlimit"):
-            parts = text.split()
-            if len(parts) == 3 and parts[1].lstrip("-").isdigit() and parts[2].lstrip("-").isdigit():
-                low_limit = int(parts[1])
-                high_limit = int(parts[2])
-                if low_limit < high_limit:
-                    state.pnl_alert_low = low_limit
-                    state.pnl_alert_high = high_limit
-                    persist_runtime_state(STATE_FILE_PATH, state, settings)
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        f"📈 PnL alert range updated: `{state.pnl_alert_low} ~ {state.pnl_alert_high} USDT`",
-                        state=state,
-                        force_send=True,
-                    )
-                else:
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        "❌ The lower bound must be smaller than the upper bound.",
-                        state=state,
-                        force_send=True,
-                    )
-        elif text.startswith("/config"):
+        if text.startswith("/config"):
             response = handle_config_command(text, state, settings)
             send_telegram_message(
                 session,
@@ -925,7 +901,6 @@ def check_telegram_commands(
                 state.max_pnl = max(state.max_pnl, pnl)
                 state.min_pnl = min(state.min_pnl, pnl)
                 state_changed = prev_max != state.max_pnl or prev_min != state.min_pnl
-            status_info = get_system_info_text(settings, show_all=True)
             if config.openai_admin_key:
                 send_telegram_message(
                     session,
@@ -944,15 +919,14 @@ def check_telegram_commands(
                 session,
                 config,
                 settings,
-                compose_status_message(state, status_info, pnl, openai_line=openai_line, spot_balance=spot_balance),
+                compose_status_message(state, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
                 state=state,
                 force_send=True,
             )
             if state_changed:
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text == "/stop":
-            state.is_running = False
-            persist_runtime_state(STATE_FILE_PATH, state, settings)
+            handle_config_command("/config set bot_running off", state, settings)
             send_telegram_message(
                 session,
                 config,
@@ -962,35 +936,12 @@ def check_telegram_commands(
                 force_send=True,
             )
         elif text == "/start":
-            state.is_running = True
-            persist_runtime_state(STATE_FILE_PATH, state, settings)
+            handle_config_command("/config set bot_running on", state, settings)
             send_telegram_message(
                 session,
                 config,
                 settings,
                 "▶️ Bot resumed. Alerts are active again.",
-                state=state,
-                force_send=True,
-            )
-        elif text == "/nightmode off":
-            state.night_mode_enabled = False
-            persist_runtime_state(STATE_FILE_PATH, state, settings)
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                "🌙 Night mode is now OFF.",
-                state=state,
-                force_send=True,
-            )
-        elif text == "/nightmode on":
-            state.night_mode_enabled = True
-            persist_runtime_state(STATE_FILE_PATH, state, settings)
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                "🌙 Night mode is now ON.",
                 state=state,
                 force_send=True,
             )
@@ -1055,7 +1006,24 @@ def check_telegram_commands(
             )
         elif text == "/spot":
             spot_balance = get_spot_balance(session, config)
-            if isinstance(spot_balance, (int, float)):
+            if isinstance(spot_balance, dict):
+                total = spot_balance.get("total", 0.0)
+                breakdown = spot_balance.get("breakdown", [])
+                msg_lines = [f"💰 *Spot Balance:* `{total:,.2f} USDT`"]
+                if breakdown:
+                    msg_lines.append("\n*Asset Breakdown:*")
+                    for item in breakdown:
+                        msg_lines.append(f"• `{item['asset']}`: `{item['usdt_value']:,.2f} USDT` (`{item['amount']}`)")
+
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    "\n".join(msg_lines),
+                    state=state,
+                    force_send=True,
+                )
+            elif isinstance(spot_balance, (int, float)):
                 send_telegram_message(
                     session,
                     config,
@@ -1142,21 +1110,19 @@ def check_telegram_commands(
                 config,
                 settings,
                 "*ℹ️ Info commands:*\n"
-                "• `/status` – Current configuration, metrics, and PnL snapshot\n"
-                "• `/pnl` – Latest unrealized PnL\n"
-                "• `/spot` – Spot wallet USDT balance\n"
+                "• `/status` – Comprehensive snapshot (PnL, Spot, Config)\n"
+                "• `/pnl` – Quick unrealized PnL check\n"
+                "• `/spot` – Detailed spot wallet breakdown\n"
                 "• `/uptime` – Bot running time\n"
-                "• `/sysinfo` – CPU, RAM, and disk utilisation\n"
-                "• `/showtodo` – Display the TODO list\n"
-                "• `/openai` (`/openaiusage`) – OpenAI usage and cost\n"
+                "• `/sysinfo` – CPU, RAM, and disk utilization\n"
+                "• `/openai` – Usage and cost stats\n"
                 "• `/help` – This reference\n"
-                "\n*🛠 Configuration commands:*\n"
-                "• `/config show|get|set` – Inspect or update runtime parameters\n"
-                "• `/setinterval <seconds>` – Update reporting interval\n"
-                "• `/setlimit <min> <max>` – Update PnL alert thresholds\n"
-                "• `/nightmode on|off` – Toggle quiet hours\n"
-                "• `/start`, `/stop` – Resume or pause alerts\n"
-                "• `/todo <text>` – Append an item to the TODO list",
+                "\n*🛠 Configuration:*\n"
+                "• `/config show` – View all runtime parameters\n"
+                "• `/config set <key> <value>` – Update a parameter\n"
+                "• `/start` / `/stop` – Resume or pause alerts\n"
+                "• `/todo <text>` – Add an item to TODO\n"
+                "• `/showtodo` – View the TODO list",
                 state=state,
                 force_send=True,
             )
@@ -1190,14 +1156,25 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         state.min_pnl = min(state.min_pnl, pnl)
 
     # Format spot balance message
-    spot_msg = f"💰 Spot: {spot_balance:,.2f} USDT\n" if isinstance(spot_balance, (int, float)) else f"⚠️ {spot_balance}\n"
+    if isinstance(spot_balance, dict):
+        total = spot_balance.get("total", 0.0)
+        spot_msg = f"💰 *Spot:* `{total:,.2f} USDT`\n"
+        breakdown = spot_balance.get("breakdown", [])
+        for item in breakdown[:5]:  # Show top 5 assets
+            spot_msg += f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`\n"
+    elif isinstance(spot_balance, (int, float)):
+        spot_msg = f"💰 *Spot:* `{spot_balance:,.2f} USDT`\n"
+    else:
+        spot_msg = f"⚠️ {spot_balance}\n"
+
+    spot_msg += "\n"  # Separate spot and futures
 
     if pnl <= state.pnl_alert_low:
         send_telegram_message(
             session,
             config,
             settings,
-            f"Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     elif pnl >= state.pnl_alert_high:
@@ -1205,7 +1182,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             session,
             config,
             settings,
-            f"High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
+            f"{spot_msg}High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
             state=state,
         )
     else:
@@ -1314,14 +1291,12 @@ def main() -> None:
 
 
 
-        now_dt = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
-        status_info = get_system_info_text(settings, show_all=True)
         openai_line = build_openai_status_line(state) if config.openai_admin_key else None
         send_telegram_message(
             session,
             config,
             settings,
-            compose_status_message(state, status_info, pnl, local_time=now_dt, openai_line=openai_line, spot_balance=spot_balance),
+            compose_status_message(state, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
             state=state,
             force_send=True,
         )

@@ -19,7 +19,7 @@ set at runtime are persisted to the state file so they survive restarts.
 - `API_KEY`, `API_SECRET` – Binance credentials (required)
 - `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` – Telegram bot credentials (required)
 - `OPENAI_ADMIN_KEY` – OpenAI org admin key enabling `/openai` usage reports (optional)
-- `PNL_BOT_DEFAULT_INTERVAL_SECONDS` (900) – default alert interval in seconds
+- `PNL_BOT_DEFAULT_INTERVAL_SECONDS` (900) – default alert interval in seconds (max 86400/24h)
 - `PNL_BOT_DEFAULT_PNL_ALERT_LOW` (-20) – lower unrealized PnL alert threshold
 - `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` (20) – upper unrealized PnL alert threshold
 - `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` (true) – enable quiet hours on start
@@ -34,29 +34,28 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - Long-polls Telegram for commands and updates `update_id` tracking automatically
 - Persists editable runtime settings (interval, thresholds, run state, PnL bounds) to the JSON state file whenever they change
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
-- CPU/RAM/disk alert thresholds are hardcoded and included in status messages
-- When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost/usage in the background; `/openai` forces a new fetch and includes the latest API window end time
+- CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
+- When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
+- Status message is organized into **Status** (Uptime, BTC/USDT Price, Config), **Spot Balance**, and **Futures PnL** sections
 
 ## Telegram Commands
 
 **Information**
 
-- `/status` – full status report including system metrics
+- `/status` – Comprehensive snapshot (PnL, Spot, Config, Costs)
 - `/pnl` – fetch the latest unrealized PnL immediately
-- `/spot` – fetch the current Spot wallet USDT balance
+- `/spot` – fetch the current Spot wallet breakdown (Top 5 assets)
 - `/uptime` – show the running time since launch
-- `/sysinfo` – display current CPU, RAM, and disk usage
+- `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/showtodo` – display the TODO list contents
-- `/openai` – report OpenAI month-to-date cost, usage, and last month total (`/openaiusage` alias)
+- `/openai` – report OpenAI Month-to-Date and Last Month costs
 - `/help` – command reference
 
 **Configuration & Actions**
 
-- `/config show|get|set` – inspect or update any runtime parameter
-- `/setinterval <seconds>` – update the reporting interval (10-3600)
-- `/setlimit <min> <max>` – update unrealized PnL alert bounds
-- `/nightmode on|off` – toggle quiet hours
-- `/start`, `/stop` – resume or pause automatic monitoring
+- `/config show` – View all runtime parameters
+- `/config set <key> <value>` – Update a parameter (interval, limits, bot state)
+- `/start`, `/stop` – Resume or pause automatic monitoring alerts
 - `/todo <text>` – append to the local TODO list
 
 ## Files & Constants

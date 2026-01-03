@@ -36,7 +36,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
-- Status message is organized into **Status** (Uptime, BTC/USDT Price, Config), **Spot Balance**, and **Futures PnL** sections
+- Status message is organized into **Status** (Uptime, Config), **Spot Balance** (including token prices), and **Futures PnL** sections
 
 ## Telegram Commands
 
@@ -44,7 +44,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 - `/status` – Comprehensive snapshot (PnL, Spot, Config, Costs)
 - `/pnl` – fetch the latest unrealized PnL immediately
-- `/spot` – fetch the current Spot wallet breakdown (Top 5 assets)
+- `/spot` – fetch the current Spot wallet breakdown (USDT value and current prices)
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/showtodo` – display the TODO list contents
@@ -57,6 +57,41 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/config set <key> <value>` – Update a parameter (interval, limits, bot state)
 - `/start`, `/stop` – Resume or pause automatic monitoring alerts
 - `/todo <text>` – append to the local TODO list
+
+## Example Outputs
+
+### /status
+Comprehensive bot and portfolio snapshot:
+```text
+🧭 Status:
+• Running: `True`
+• Interval: `15.0m`
+• Night mode: `True` (active: `False`)
+• Alert limit: `-20 USDT ~ 100 USDT`
+• Uptime: `24h,12m,5s`
+• OpenAI cost (MTD): `$0.4200` (last month `$1.1500`)
+
+💰 *Spot Balance:*
+• Total: `5,420.50 USDT`
+  ▫️ `BTC`: `3,200.00 USDT` @ 98,500.2500
+  ▫️ `ETH`: `1,500.00 USDT` @ 2,650.1000
+  ▫️ `SOL`: `720.50 USDT` @ 165.4500
+
+📊 *Futures PnL:*
+• Current PnL: `125.40 USDT`
+• Max PnL: `250.00 USDT`, Min: `-40.00 USDT`
+```
+
+### /spot
+Detailed spot wallet breakdown:
+```text
+💰 *Spot Balance:* `5,420.50 USDT`
+
+*Asset Breakdown:*
+• `BTC`: `3,200.00 USDT` @ 98,500.2500
+• `ETH`: `1,500.00 USDT` @ 2,650.1000
+• `SOL`: `720.50 USDT` @ 165.4500
+```
 
 ## Files & Constants
 

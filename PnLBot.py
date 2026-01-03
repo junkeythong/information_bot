@@ -310,19 +310,13 @@ def compose_status_message(
     openai_line: Optional[str] = None,
     spot_balance: Optional[Union[float, str]] = None,
 ) -> str:
-    btc_price_str = ""
-    if isinstance(spot_balance, dict):
-        btc_price = spot_balance.get("btc_price", 0.0)
-        btc_price_str = f"\n• BTC Price: `{btc_price:,.2f} USDT`"
-
     lines = [
         "🧭 Status:",
         f"• Running: `{state.is_running}`",
-        f"• Interval: `{state.interval_seconds}s`",
+        f"• Interval: `{state.interval_seconds / 60:.1f}m`",
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
         f"• Uptime: `{get_uptime(state)}`",
-        f"{btc_price_str}",
     ]
     if openai_line:
         lines.append(openai_line)
@@ -337,7 +331,8 @@ def compose_status_message(
             lines.append(f"• Total: `{total:,.2f} USDT`")
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
-                lines.append(f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT` ({item['amount']:.4f})")
+                price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
+                lines.append(f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}")
             if len(breakdown) > 5:
                 lines.append(f"  ▫️ ... and {len(breakdown)-5} more assets")
         elif isinstance(spot_balance, (int, float)):
@@ -547,7 +542,8 @@ def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[dict
             breakdown.append({
                 "asset": asset,
                 "amount": amount,
-                "usdt_value": asset_usdt_value
+                "usdt_value": asset_usdt_value,
+                "price": prices.get(symbol, 1.0) if asset != "USDT" else 1.0
             })
 
         # Sort breakdown by USDT value descending
@@ -1013,7 +1009,8 @@ def check_telegram_commands(
                 if breakdown:
                     msg_lines.append("\n*Asset Breakdown:*")
                     for item in breakdown:
-                        msg_lines.append(f"• `{item['asset']}`: `{item['usdt_value']:,.2f} USDT` (`{item['amount']}`)")
+                        price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
+                        msg_lines.append(f"• `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}")
 
                 send_telegram_message(
                     session,
@@ -1161,7 +1158,8 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         spot_msg = f"💰 *Spot:* `{total:,.2f} USDT`\n"
         breakdown = spot_balance.get("breakdown", [])
         for item in breakdown[:5]:  # Show top 5 assets
-            spot_msg += f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`\n"
+            price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
+            spot_msg += f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}\n"
     elif isinstance(spot_balance, (int, float)):
         spot_msg = f"💰 *Spot:* `{spot_balance:,.2f} USDT`\n"
     else:

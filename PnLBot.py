@@ -109,6 +109,8 @@ class BotState:
     last_update_id: Optional[int] = None
     max_pnl: float = 0.0
     min_pnl: float = 0.0
+    max_spot_balance: float = 0.0
+    min_spot_balance: float = 0.0
     night_mode_active: bool = False
     start_time: float = field(default_factory=time.time)
     openai_usage: Optional[dict] = None
@@ -329,6 +331,7 @@ def compose_status_message(
         if isinstance(spot_balance, dict):
             total = spot_balance.get("total", 0.0)
             lines.append(f"• Total: `{total:,.2f} USDT`")
+            lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
                 price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
@@ -337,6 +340,7 @@ def compose_status_message(
                 lines.append(f"  ▫️ ... and {len(breakdown)-5} more assets")
         elif isinstance(spot_balance, (int, float)):
             lines.append(f"• Total: `{spot_balance:,.2f} USDT`")
+            lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
         else:
             lines.append(f"• {spot_balance}")
 
@@ -422,6 +426,8 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     state.pnl_alert_high = _safe_int(state_data.get("pnl_alert_high"), state.pnl_alert_high)
     state.max_pnl = _safe_float(state_data.get("max_pnl"), state.max_pnl)
     state.min_pnl = _safe_float(state_data.get("min_pnl"), state.min_pnl)
+    state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
+    state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
 
     night_window = state_data.get("night_mode_window")
     if isinstance(night_window, (list, tuple)) and len(night_window) == 2:
@@ -443,6 +449,8 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "pnl_alert_high": state.pnl_alert_high,
         "max_pnl": state.max_pnl,
         "min_pnl": state.min_pnl,
+        "max_spot_balance": state.max_spot_balance,
+        "min_spot_balance": state.min_spot_balance,
         "night_mode_window": list(state.night_mode_window),
     }
     payload = {
@@ -892,11 +900,24 @@ def check_telegram_commands(
             spot_balance = get_spot_balance(session, config)
             state_changed = False
             if isinstance(pnl, (int, float)):
-                prev_max = state.max_pnl
-                prev_min = state.min_pnl
-                state.max_pnl = max(state.max_pnl, pnl)
-                state.min_pnl = min(state.min_pnl, pnl)
-                state_changed = prev_max != state.max_pnl or prev_min != state.min_pnl
+                prev_max_p = state.max_pnl
+                prev_min_p = state.min_pnl
+                if pnl >= 0:
+                    state.max_pnl = max(state.max_pnl, pnl)
+                if pnl <= 0:
+                    state.min_pnl = min(state.min_pnl, pnl)
+                state_changed = state_changed or prev_max_p != state.max_pnl or prev_min_p != state.min_pnl
+
+            if isinstance(spot_balance, dict):
+                total_s = spot_balance.get("total", 0.0)
+                if total_s > 0:
+                    prev_max_s = state.max_spot_balance
+                    prev_min_s = state.min_spot_balance
+                    if state.max_spot_balance == 0: state.max_spot_balance = total_s
+                    if state.min_spot_balance == 0: state.min_spot_balance = total_s
+                    state.max_spot_balance = max(state.max_spot_balance, total_s)
+                    state.min_spot_balance = min(state.min_spot_balance, total_s)
+                    state_changed = state_changed or prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance
             if config.openai_admin_key:
                 send_telegram_message(
                     session,
@@ -1004,8 +1025,21 @@ def check_telegram_commands(
             spot_balance = get_spot_balance(session, config)
             if isinstance(spot_balance, dict):
                 total = spot_balance.get("total", 0.0)
+                if total > 0:
+                    prev_max_s = state.max_spot_balance
+                    prev_min_s = state.min_spot_balance
+                    if state.max_spot_balance == 0: state.max_spot_balance = total
+                    if state.min_spot_balance == 0: state.min_spot_balance = total
+                    state.max_spot_balance = max(state.max_spot_balance, total)
+                    state.min_spot_balance = min(state.min_spot_balance, total)
+                    if prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance:
+                        persist_runtime_state(STATE_FILE_PATH, state, settings)
+
                 breakdown = spot_balance.get("breakdown", [])
-                msg_lines = [f"💰 *Spot Balance:* `{total:,.2f} USDT`"]
+                msg_lines = [
+                    f"💰 *Spot Balance:* `{total:,.2f} USDT`",
+                    f"📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`"
+                ]
                 if breakdown:
                     msg_lines.append("\n*Asset Breakdown:*")
                     for item in breakdown:
@@ -1144,55 +1178,72 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         send_telegram_message(session, config, settings, pnl, state=state, force_send=True)
         return
 
-    prev_max = state.max_pnl
-    prev_min = state.min_pnl
+    state_changed = False
 
-    if pnl >= 0:
-        state.max_pnl = max(state.max_pnl, pnl)
-    if pnl <= 0:
-        state.min_pnl = min(state.min_pnl, pnl)
+    # Update Futures Stats
+    if isinstance(pnl, (int, float)):
+        prev_max_p = state.max_pnl
+        prev_min_p = state.min_pnl
+        if pnl >= 0:
+            state.max_pnl = max(state.max_pnl, pnl)
+        if pnl <= 0:
+            state.min_pnl = min(state.min_pnl, pnl)
+        if state.max_pnl != prev_max_p or state.min_pnl != prev_min_p:
+            state_changed = True
+
+    # Update Spot Stats
+    total_spot = 0.0
+    if isinstance(spot_balance, dict):
+        total_spot = spot_balance.get("total", 0.0)
+    elif isinstance(spot_balance, (int, float)):
+        total_spot = float(spot_balance)
+
+    if total_spot > 0:
+        prev_max_s = state.max_spot_balance
+        prev_min_s = state.min_spot_balance
+        if state.max_spot_balance == 0:
+            state.max_spot_balance = total_spot
+        if state.min_spot_balance == 0:
+            state.min_spot_balance = total_spot
+
+        state.max_spot_balance = max(state.max_spot_balance, total_spot)
+        state.min_spot_balance = min(state.min_spot_balance, total_spot)
+        if state.max_spot_balance != prev_max_s or state.min_spot_balance != prev_min_s:
+            state_changed = True
 
     # Format spot balance message
-    if isinstance(spot_balance, dict):
-        total = spot_balance.get("total", 0.0)
-        spot_msg = f"💰 *Spot:* `{total:,.2f} USDT`\n"
-        breakdown = spot_balance.get("breakdown", [])
-        for item in breakdown[:5]:  # Show top 5 assets
-            price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
-            spot_msg += f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}\n"
-    elif isinstance(spot_balance, (int, float)):
-        spot_msg = f"💰 *Spot:* `{spot_balance:,.2f} USDT`\n"
-    else:
-        spot_msg = f"⚠️ {spot_balance}\n"
+    spot_msg = ""
+    if total_spot > 0:
+        spot_msg = f"💰 *Spot:* `{total_spot:,.2f} USDT`, `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`\n"
+        if isinstance(spot_balance, dict):
+            breakdown = spot_balance.get("breakdown", [])
+            for item in breakdown[:5]:  # Show top 5 assets
+                price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
+                spot_msg += f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}\n"
+        spot_msg += "\n"
+    elif isinstance(spot_balance, str) and not ("0.0" in spot_balance or "0 USDT" in spot_balance):
+        spot_msg = f"⚠️ {spot_balance}\n\n"
 
-    spot_msg += "\n"  # Separate spot and futures
+    # Format futures message
+    futures_msg = ""
+    if pnl != 0.0:
+        if pnl <= state.pnl_alert_low:
+            futures_msg = f"Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+        elif pnl >= state.pnl_alert_high:
+            futures_msg = f"High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+        else:
+            futures_msg = f"📊 Futures PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`"
 
-    if pnl <= state.pnl_alert_low:
+    if spot_msg or futures_msg:
         send_telegram_message(
             session,
             config,
             settings,
-            f"{spot_msg}Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
-            state=state,
-        )
-    elif pnl >= state.pnl_alert_high:
-        send_telegram_message(
-            session,
-            config,
-            settings,
-            f"{spot_msg}High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`",
-            state=state,
-        )
-    else:
-        send_telegram_message(
-            session,
-            config,
-            settings,
-            f"{spot_msg}📊 Futures PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`",
+            f"{spot_msg}{futures_msg}".strip(),
             state=state,
         )
 
-    if state.max_pnl != prev_max or state.min_pnl != prev_min:
+    if state_changed:
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
     system_info = get_system_info_text(settings)
@@ -1286,6 +1337,13 @@ def main() -> None:
 
         # Fetch spot balance at startup
         spot_balance = get_spot_balance(session, config)
+        if isinstance(spot_balance, dict):
+            total_s = spot_balance.get("total", 0.0)
+            if total_s > 0:
+                if state.max_spot_balance == 0: state.max_spot_balance = total_s
+                if state.min_spot_balance == 0: state.min_spot_balance = total_s
+                state.max_spot_balance = max(state.max_spot_balance, total_s)
+                state.min_spot_balance = min(state.min_spot_balance, total_s)
 
 
 

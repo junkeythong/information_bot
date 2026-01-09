@@ -32,11 +32,12 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 - Uses a retry-enabled `requests.Session` for Binance and Telegram APIs
 - Long-polls Telegram for commands and updates `update_id` tracking automatically
-- Persists editable runtime settings (interval, thresholds, run state, PnL bounds) to the JSON state file whenever they change
+- Persists editable runtime settings (interval, thresholds, run state, PnL and Spot bounds) to the JSON state file whenever they change
+- Hides Spot and Futures sections in the notification loop if their respective balance or PnL is zero
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
-- Status message is organized into **Status** (Uptime, Config), **Spot Balance** (including token prices), and **Futures PnL** sections
+- Status message is organized into **Status** (Uptime, Config), **Spot Balance** (including ranges and token prices), and **Futures PnL** sections
 
 ## Telegram Commands
 
@@ -73,6 +74,7 @@ Comprehensive bot and portfolio snapshot:
 
 💰 *Spot Balance:*
 • Total: `5,420.50 USDT`
+• Max: `5,600.00 USDT`, Min: `5,200.00 USDT`
   ▫️ `BTC`: `3,200.00 USDT` @ 98,500.2500
   ▫️ `ETH`: `1,500.00 USDT` @ 2,650.1000
   ▫️ `SOL`: `720.50 USDT` @ 165.4500
@@ -86,6 +88,7 @@ Comprehensive bot and portfolio snapshot:
 Detailed spot wallet breakdown:
 ```text
 💰 *Spot Balance:* `5,420.50 USDT`
+📊 *Range:* `[5,200.00, 5,600.00]`
 
 *Asset Breakdown:*
 • `BTC`: `3,200.00 USDT` @ 98,500.2500

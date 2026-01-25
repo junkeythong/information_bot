@@ -918,20 +918,8 @@ def check_telegram_commands(
                     state.max_spot_balance = max(state.max_spot_balance, total_s)
                     state.min_spot_balance = min(state.min_spot_balance, total_s)
                     state_changed = state_changed or prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance
-            if config.openai_admin_key:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    "Retrieving OpenAI usage, please wait ... it might take a while.",
-                    state=state,
-                    force_send=True,
-                )
-                usage_session = openai_session or session
-                refresh_openai_usage(usage_session, config, settings, state)
-                openai_line = build_openai_status_line(state)
-            else:
-                openai_line = None
+            # OpenAI retrieval is now only done via /openai command to save resources
+            openai_line = None
             send_telegram_message(
                 session,
                 config,
@@ -1021,18 +1009,28 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
-        elif text == "/spot":
+        elif text.startswith("/spot"):
+            # specific logic to allow "/spot reset"
+            parts = text.split()
+            reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
+
             spot_balance = get_spot_balance(session, config)
             if isinstance(spot_balance, dict):
                 total = spot_balance.get("total", 0.0)
                 if total > 0:
                     prev_max_s = state.max_spot_balance
                     prev_min_s = state.min_spot_balance
+
+                    # If reset is requested, snap min/max to current total
+                    if reset_mode:
+                        state.max_spot_balance = total
+                        state.min_spot_balance = total
+
                     if state.max_spot_balance == 0: state.max_spot_balance = total
                     if state.min_spot_balance == 0: state.min_spot_balance = total
                     state.max_spot_balance = max(state.max_spot_balance, total)
                     state.min_spot_balance = min(state.min_spot_balance, total)
-                    if prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance:
+                    if reset_mode or prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance:
                         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
                 breakdown = spot_balance.get("breakdown", [])
@@ -1143,17 +1141,18 @@ def check_telegram_commands(
                 "*ℹ️ Info commands:*\n"
                 "• `/status` – Comprehensive snapshot (PnL, Spot, Config)\n"
                 "• `/pnl` – Quick unrealized PnL check\n"
-                "• `/spot` – Detailed spot wallet breakdown\n"
-                "• `/uptime` – Bot running time\n"
-                "• `/sysinfo` – CPU, RAM, and disk utilization\n"
+                "• `/spot` – Quick spot balance check\n"
+                "• `/uptime` – Bot uptime\n"
+                "• `/sysinfo` – System information\n"
                 "• `/openai` – Usage and cost stats\n"
+                "• `/showtodo` – View the TODO list\n"
                 "• `/help` – This reference\n"
                 "\n*🛠 Configuration:*\n"
                 "• `/config show` – View all runtime parameters\n"
                 "• `/config set <key> <value>` – Update a parameter\n"
                 "• `/start` / `/stop` – Resume or pause alerts\n"
                 "• `/todo <text>` – Add an item to TODO\n"
-                "• `/showtodo` – View the TODO list",
+                "• `/spot reset` – reset clear min/max history",
                 state=state,
                 force_send=True,
             )
@@ -1297,9 +1296,9 @@ def main() -> None:
     try:
         state.last_update_id = init_last_update_id(session, config, settings)
         if openai_session:
-            refresh_openai_usage(openai_session, config, settings, state)
-
-            start_openai_usage_worker(openai_session, config, settings, state, OPENAI_REFRESH_SECONDS)
+            # refresh_openai_usage(openai_session, config, settings, state)
+            # start_openai_usage_worker(openai_session, config, settings, state, OPENAI_REFRESH_SECONDS)
+            pass
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl
@@ -1347,7 +1346,8 @@ def main() -> None:
 
 
 
-        openai_line = build_openai_status_line(state) if config.openai_admin_key else None
+        # OpenAI retrieval is done on demand
+        openai_line = None
         send_telegram_message(
             session,
             config,

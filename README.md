@@ -43,9 +43,9 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 **Information**
 
-- `/status` – Comprehensive snapshot (PnL, Spot, Config, Costs)
+- `/status` – Comprehensive snapshot (PnL, Spot, Config)
 - `/pnl` – fetch the latest unrealized PnL immediately
-- `/spot` – fetch the current Spot wallet breakdown (USDT value and current prices)
+- `/spot` – fetch spot wallet breakdown
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/showtodo` – display the TODO list contents
@@ -58,6 +58,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/config set <key> <value>` – Update a parameter (interval, limits, bot state)
 - `/start`, `/stop` – Resume or pause automatic monitoring alerts
 - `/todo <text>` – append to the local TODO list
+- `/spot reset` – reset clear min/max history
 
 ## Example Outputs
 
@@ -70,7 +71,6 @@ Comprehensive bot and portfolio snapshot:
 • Night mode: `True` (active: `False`)
 • Alert limit: `-20 USDT ~ 100 USDT`
 • Uptime: `24h,12m,5s`
-• OpenAI cost (MTD): `$0.4200` (last month `$1.1500`)
 
 💰 *Spot Balance:*
 • Total: `5,420.50 USDT`
@@ -109,7 +109,7 @@ Detailed spot wallet breakdown:
 ## Quick Start
 
 1. Export required environment variables (see Configuration).
-2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz` are available).
+2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz` are available), should be in a venv directory.
 3. Run the bot: `python PnLBot.py`.
 4. Send `/status` from the configured Telegram chat to confirm connectivity.
 

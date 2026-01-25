@@ -1,5 +1,9 @@
+[Unit]
+Description=PnL Telebot
+After=network.target
+
 [Service]
-ExecStart=/usr/bin/python3 <your_path>/PnLBot.py
+ExecStart=<venv_path>/bin/python <your_path>/PnLBot.py
 EnvironmentFile=<your_path>/.env
 Restart=always
 RestartSec=5

@@ -118,13 +118,12 @@ Current air quality information:
 - Timezone: `Asia/Ho_Chi_Minh` (hardcoded)
 - System Alerts: CPU/RAM 80%, Disk 90% (hardcoded)
 - Telegram: Poll 25s, Max Msg 4096 (hardcoded)
-- OpenAI Refresh: 300s (hardcoded)
 
 ## Quick Start
 
 1. Export required environment variables (see Configuration).
-2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz` are available), should be in a venv directory.
+2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz` are available), should be installed in a venv directory.
 3. Run the bot: `python PnLBot.py`.
 4. Send `/status` from the configured Telegram chat to confirm connectivity.
 
-Extend the script by customizing thresholds, integrating detailed trade reports, or adjusting persistence paths through the provided environment variables.
+Extend the script by customizing thresholds, integrating detailed trade reports, or anything you want.

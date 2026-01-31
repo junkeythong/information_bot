@@ -18,6 +18,7 @@ from urllib3.util.retry import Retry
 
 OPENAI_COSTS_URL = "https://api.openai.com/v1/organization/costs"
 OPENAI_USAGE_URL = "https://api.openai.com/v1/organization/usage/completions"
+IQAIR_API_URL = "https://api.airvisual.com/v2/nearest_city"
 ASCII_STARTUP_BANNER = (
     "```\n"
     "ʕ•ᴥ•ʔ\n"
@@ -58,6 +59,16 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Environment variable {name} must be a float") from exc
+
+
 @dataclass
 class BotSettings:
     default_interval_seconds: int
@@ -96,6 +107,9 @@ class EnvConfig:
     telegram_token: str
     telegram_chat_id: str
     openai_admin_key: Optional[str] = None
+    iqair_api_key: Optional[str] = None
+    iqair_latitude: float = 10.8231
+    iqair_longitude: float = 106.6297
 
 
 @dataclass
@@ -387,6 +401,9 @@ def load_env_config() -> EnvConfig:
         telegram_token=require_env("TELEGRAM_TOKEN"),
         telegram_chat_id=require_env("TELEGRAM_CHAT_ID"),
         openai_admin_key=os.getenv("OPENAI_ADMIN_KEY"),
+        iqair_api_key=os.getenv("IQAIR_API_KEY"),
+        iqair_latitude=env_float("IQAIR_LATITUDE", 10.8231),
+        iqair_longitude=env_float("IQAIR_LONGITUDE", 106.6297),
     )
 
 
@@ -564,6 +581,40 @@ def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[dict
         }
     except Exception as exc:
         return f"Spot balance fetch error: {exc}"
+
+
+def get_air_quality(session: requests.Session, config: EnvConfig) -> Union[dict, str]:
+    """Fetch air quality data from IQAir API using GPS coordinates."""
+    if not config.iqair_api_key:
+        return "IQAir API key not configured"
+
+    try:
+        params = {
+            "lat": config.iqair_latitude,
+            "lon": config.iqair_longitude,
+            "key": config.iqair_api_key,
+        }
+        response = session.get(IQAIR_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("status") != "success":
+            return f"IQAir API error: {data.get('message', 'Unknown error')}"
+
+        result_data = data.get("data", {})
+        current = result_data.get("current", {})
+        pollution = current.get("pollution", {})
+        weather = current.get("weather", {})
+
+        return {
+            "city": result_data.get("city", "Unknown"),
+            "country": result_data.get("country", "Unknown"),
+            "aqi_us": pollution.get("aqius", 0),
+            "temperature": weather.get("tp", 0),
+            "humidity": weather.get("hu", 0),
+        }
+    except Exception as exc:
+        return f"Air quality fetch error: {exc}"
 
 
 def get_top_processes(n: int = 5) -> Tuple[str, str]:
@@ -1082,6 +1133,47 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
+        elif text in {"/aqi"}:
+            aqi_data = get_air_quality(session, config)
+            if isinstance(aqi_data, dict):
+                aqi_us = aqi_data.get("aqi_us", 0)
+                # Determine AQI level and emoji
+                if aqi_us <= 50:
+                    aqi_emoji = "🟢"  # Green heart - Good
+                    aqi_level = "Good"
+                elif aqi_us <= 100:
+                    aqi_emoji = "🟡"  # Yellow heart - Moderate
+                    aqi_level = "Moderate"
+                elif aqi_us <= 150:
+                    aqi_emoji = "🟠"  # Orange heart - Unhealthy for Sensitive Groups
+                    aqi_level = "Unhealthy for Sensitive Groups"
+                elif aqi_us <= 200:
+                    aqi_emoji = "🔴"  # Red heart - Unhealthy
+                    aqi_level = "Unhealthy"
+                elif aqi_us <= 300:
+                    aqi_emoji = "🟣"  # Purple heart - Very Unhealthy
+                    aqi_level = "Very Unhealthy"
+                else:
+                    aqi_emoji = "🟤"  # Broken heart - Hazardous
+                    aqi_level = "Hazardous"
+
+                message = (
+                    f"{aqi_emoji} *Air Quality - {aqi_data.get('city', 'N/A')}*\n"
+                    f"• AQI (US): `{aqi_us}` - {aqi_level}\n"
+                    f"• Temperature: `{aqi_data.get('temperature', 0)}°C`\n"
+                    f"• Humidity: `{aqi_data.get('humidity', 0)}%`"
+                )
+            else:
+                message = f"⚠️ {aqi_data}"
+
+            send_telegram_message(
+                session,
+                config,
+                settings,
+                message,
+                state=state,
+                force_send=True,
+            )
         elif text.startswith("/todo"):
             todo_item = text[len("/todo") :].strip()
             if todo_item:
@@ -1142,6 +1234,7 @@ def check_telegram_commands(
                 "• `/status` – Comprehensive snapshot (PnL, Spot, Config)\n"
                 "• `/pnl` – Quick unrealized PnL check\n"
                 "• `/spot` – Quick spot balance check\n"
+                "• `/aqi` – Air quality index (IQAir)\n"
                 "• `/uptime` – Bot uptime\n"
                 "• `/sysinfo` – System information\n"
                 "• `/openai` – Usage and cost stats\n"
@@ -1233,12 +1326,34 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         else:
             futures_msg = f"📊 Futures PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`"
 
-    if spot_msg or futures_msg:
+    # Format AQI message
+    aqi_msg = ""
+    if config.iqair_api_key:
+        aqi_data = get_air_quality(session, config)
+        if isinstance(aqi_data, dict):
+            aqi_us = aqi_data.get("aqi_us", 0)
+            # Determine AQI emoji
+            if aqi_us <= 50:
+                aqi_emoji = "🟢"
+            elif aqi_us <= 100:
+                aqi_emoji = "🟡"
+            elif aqi_us <= 150:
+                aqi_emoji = "🟠"
+            elif aqi_us <= 200:
+                aqi_emoji = "🔴"
+            elif aqi_us <= 300:
+                aqi_emoji = "🟣"
+            else:
+                aqi_emoji = "🟤"
+
+            aqi_msg = f"\n{aqi_emoji} *AQI:* `{aqi_us}` ({aqi_data.get('city', 'N/A')}), Temp: `{aqi_data.get('temperature', 0)}°C`"
+
+    if spot_msg or futures_msg or aqi_msg:
         send_telegram_message(
             session,
             config,
             settings,
-            f"{spot_msg}{futures_msg}".strip(),
+            f"{spot_msg}{futures_msg}{aqi_msg}".strip(),
             state=state,
         )
 
@@ -1295,10 +1410,6 @@ def main() -> None:
 
     try:
         state.last_update_id = init_last_update_id(session, config, settings)
-        if openai_session:
-            # refresh_openai_usage(openai_session, config, settings, state)
-            # start_openai_usage_worker(openai_session, config, settings, state, OPENAI_REFRESH_SECONDS)
-            pass
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl

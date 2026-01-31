@@ -19,6 +19,9 @@ set at runtime are persisted to the state file so they survive restarts.
 - `API_KEY`, `API_SECRET` – Binance credentials (required)
 - `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` – Telegram bot credentials (required)
 - `OPENAI_ADMIN_KEY` – OpenAI org admin key enabling `/openai` usage reports (optional)
+- `IQAIR_API_KEY` – IQAir API key for air quality monitoring (optional, get free key at [IQAir Dashboard](https://www.iqair.com/dashboard/api))
+- `IQAIR_LATITUDE` – Latitude for air quality monitoring (default: 10.8231 - Ho Chi Minh City)
+- `IQAIR_LONGITUDE` – Longitude for air quality monitoring (default: 106.6297 - Ho Chi Minh City)
 - `PNL_BOT_DEFAULT_INTERVAL_SECONDS` (900) – default alert interval in seconds (max 86400/24h)
 - `PNL_BOT_DEFAULT_PNL_ALERT_LOW` (-20) – lower unrealized PnL alert threshold
 - `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` (20) – upper unrealized PnL alert threshold
@@ -37,6 +40,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
+- When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
 - Status message is organized into **Status** (Uptime, Config), **Spot Balance** (including ranges and token prices), and **Futures PnL** sections
 
 ## Telegram Commands
@@ -46,6 +50,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/status` – Comprehensive snapshot (PnL, Spot, Config)
 - `/pnl` – fetch the latest unrealized PnL immediately
 - `/spot` – fetch spot wallet breakdown
+- `/aqi` – fetch current air quality index (requires IQAir API key)
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/showtodo` – display the TODO list contents
@@ -94,6 +99,15 @@ Detailed spot wallet breakdown:
 • `BTC`: `3,200.00 USDT` @ 98,500.2500
 • `ETH`: `1,500.00 USDT` @ 2,650.1000
 • `SOL`: `720.50 USDT` @ 165.4500
+```
+
+### /aqi
+Current air quality information:
+```text
+🟡 *Air Quality - Ho Chi Minh City*
+• AQI (US): `85` - Moderate
+• Temperature: `28°C`
+• Humidity: `75%`
 ```
 
 ## Files & Constants

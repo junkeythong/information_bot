@@ -76,6 +76,7 @@ class BotSettings:
     default_pnl_alert_high: int
     default_night_mode_enabled: bool
     night_mode_window: Tuple[int, int]
+    init_capital: Optional[float] = None
 
 
 def load_bot_settings() -> BotSettings:
@@ -85,6 +86,7 @@ def load_bot_settings() -> BotSettings:
     night_mode_start = env_int("PNL_BOT_NIGHT_MODE_START_HOUR", 0)
     night_mode_end = env_int("PNL_BOT_NIGHT_MODE_END_HOUR", 5)
     default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
+    init_capital = env_float("PNL_BOT_INIT_CAPITAL", 0.0)
     if not (0 <= night_mode_start <= 23 and 0 <= night_mode_end <= 24):
         raise RuntimeError("Night mode hours must be within 0-24 range")
     if night_mode_start == night_mode_end:
@@ -97,6 +99,7 @@ def load_bot_settings() -> BotSettings:
         default_pnl_alert_high=default_high,
         default_night_mode_enabled=default_night_mode,
         night_mode_window=night_mode_window,
+        init_capital=(init_capital if init_capital > 0 else None),
     )
 
 
@@ -125,6 +128,7 @@ class BotState:
     min_pnl: float = 0.0
     max_spot_balance: float = 0.0
     min_spot_balance: float = 0.0
+    init_capital: Optional[float] = None
     night_mode_active: bool = False
     start_time: float = field(default_factory=time.time)
     openai_usage: Optional[dict] = None
@@ -147,6 +151,18 @@ def parse_bool_value(raw: str) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError("Value must be true/false or on/off")
+
+
+def parse_float_value(raw: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Value must be a number") from exc
+    if minimum is not None and value < minimum:
+        raise ValueError(f"Value must be >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"Value must be <= {maximum}")
+    return value
 
 
 def parse_int_value(raw: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
@@ -334,6 +350,9 @@ def compose_status_message(
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
         f"• Uptime: `{get_uptime(state)}`",
     ]
+    if state.init_capital:
+        lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
+
     if openai_line:
         lines.append(openai_line)
 
@@ -344,7 +363,12 @@ def compose_status_message(
     if spot_balance is not None:
         if isinstance(spot_balance, dict):
             total = spot_balance.get("total", 0.0)
-            lines.append(f"• Total: `{total:,.2f} USDT`")
+            pnl_perc_line = ""
+            if state.init_capital:
+                pnl_perc = (total - state.init_capital) / state.init_capital * 100
+                pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+
+            lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
             lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
@@ -353,7 +377,13 @@ def compose_status_message(
             if len(breakdown) > 5:
                 lines.append(f"  ▫️ ... and {len(breakdown)-5} more assets")
         elif isinstance(spot_balance, (int, float)):
-            lines.append(f"• Total: `{spot_balance:,.2f} USDT`")
+            total = float(spot_balance)
+            pnl_perc_line = ""
+            if state.init_capital:
+                pnl_perc = (total - state.init_capital) / state.init_capital * 100
+                pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+
+            lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
             lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
         else:
             lines.append(f"• {spot_balance}")
@@ -445,6 +475,7 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     state.min_pnl = _safe_float(state_data.get("min_pnl"), state.min_pnl)
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
+    state.init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
 
     night_window = state_data.get("night_mode_window")
     if isinstance(night_window, (list, tuple)) and len(night_window) == 2:
@@ -468,6 +499,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "min_pnl": state.min_pnl,
         "max_spot_balance": state.max_spot_balance,
         "min_spot_balance": state.min_spot_balance,
+        "init_capital": state.init_capital,
         "night_mode_window": list(state.night_mode_window),
     }
     payload = {
@@ -788,6 +820,7 @@ CONFIG_ORDER = [
     "night_mode_enabled",
     "night_mode_start_hour",
     "night_mode_end_hour",
+    "init_capital",
 ]
 
 
@@ -833,6 +866,12 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         parser=_parse_night_mode_end,
         getter=lambda state, settings: state.night_mode_window[1],
         applier=_apply_night_mode_end,
+    ),
+    "init_capital": ConfigDefinition(
+        description="Initial capital for PnL % calculation (0 to disable)",
+        parser=lambda raw, state, settings: parse_float_value(raw, minimum=0.0),
+        getter=lambda state, settings: state.init_capital or 0.0,
+        applier=lambda value, state, settings: setattr(state, "init_capital", value if value > 0 else None),
     ),
 }
 
@@ -1085,8 +1124,13 @@ def check_telegram_commands(
                         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
                 breakdown = spot_balance.get("breakdown", [])
+                pnl_perc_info = ""
+                if state.init_capital:
+                    pnl_perc = (total - state.init_capital) / state.init_capital * 100
+                    pnl_perc_info = f" ({pnl_perc:+.2f}%)"
+
                 msg_lines = [
-                    f"💰 *Spot Balance:* `{total:,.2f} USDT`",
+                    f"💰 *Spot Balance:* `{total:,.2f} USDT`{pnl_perc_info}",
                     f"📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`"
                 ]
                 if breakdown:
@@ -1306,7 +1350,12 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
     # Format spot balance message
     spot_msg = ""
     if total_spot > 0:
-        spot_msg = f"💰 *Spot:* `{total_spot:,.2f} USDT`, `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`\n"
+        pnl_perc_info = ""
+        if state.init_capital:
+            pnl_perc = (total_spot - state.init_capital) / state.init_capital * 100
+            pnl_perc_info = f" ({pnl_perc:+.2f}%)"
+
+        spot_msg = f"💰 *Spot:* `{total_spot:,.2f} USDT`{pnl_perc_info}, `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`\n"
         if isinstance(spot_balance, dict):
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
@@ -1399,6 +1448,7 @@ def main() -> None:
         pnl_alert_low=settings.default_pnl_alert_low,
         pnl_alert_high=settings.default_pnl_alert_high,
         night_mode_window=settings.night_mode_window,
+        init_capital=settings.init_capital,
     )
 
     persisted = load_persisted_state(STATE_FILE_PATH)

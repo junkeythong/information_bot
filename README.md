@@ -28,6 +28,7 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` (true) – enable quiet hours on start
 - `PNL_BOT_NIGHT_MODE_START_HOUR` (0) – start of quiet window (0-23)
 - `PNL_BOT_NIGHT_MODE_END_HOUR` (5) – end of quiet window (1-24)
+- `PNL_BOT_INIT_CAPITAL` (0) – initial capital for PnL % calculation (optional)
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -41,7 +42,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
-- Status message is organized into **Status** (Uptime, Config), **Spot Balance** (including ranges and token prices), and **Futures PnL** sections
+- Status message is organized into **Status** (Uptime, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
 
 ## Telegram Commands
 
@@ -76,9 +77,10 @@ Comprehensive bot and portfolio snapshot:
 • Night mode: `True` (active: `False`)
 • Alert limit: `-20 USDT ~ 100 USDT`
 • Uptime: `24h,12m,5s`
+• Init Capital: `5,000.00 USDT`
 
 💰 *Spot Balance:*
-• Total: `5,420.50 USDT`
+• Total: `5,420.50 USDT` (+8.41%)
 • Max: `5,600.00 USDT`, Min: `5,200.00 USDT`
   ▫️ `BTC`: `3,200.00 USDT` @ 98,500.2500
   ▫️ `ETH`: `1,500.00 USDT` @ 2,650.1000
@@ -92,7 +94,7 @@ Comprehensive bot and portfolio snapshot:
 ### /spot
 Detailed spot wallet breakdown:
 ```text
-💰 *Spot Balance:* `5,420.50 USDT`
+💰 *Spot Balance:* `5,420.50 USDT` (+8.41%)
 📊 *Range:* `[5,200.00, 5,600.00]`
 
 *Asset Breakdown:*

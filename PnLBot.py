@@ -15,6 +15,8 @@ import pytz
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from lunar_vn import solar_to_lunar
+
 
 OPENAI_COSTS_URL = "https://api.openai.com/v1/organization/costs"
 OPENAI_USAGE_URL = "https://api.openai.com/v1/organization/usage/completions"
@@ -349,6 +351,8 @@ def compose_status_message(
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
         f"• Uptime: `{get_uptime(state)}`",
+        f"• Lunar Date: `{get_lunar_date_string()}`",
+        f"• TODO Left: `{get_todo_count()}`",
     ]
     if state.init_capital:
         lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
@@ -744,6 +748,26 @@ def get_uptime(state: BotState) -> str:
     hours, remainder = divmod(uptime_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours}h,{minutes}m,{seconds}s"
+
+
+def get_lunar_date_string() -> str:
+    try:
+        now = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
+        lunar = solar_to_lunar(now)
+        leap_str = " (Nhuận)" if lunar.leap else ""
+        return f"{lunar.day}/{lunar.month}/{lunar.year}{leap_str}"
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+def get_todo_count() -> int:
+    if not os.path.exists(TODO_FILE_PATH):
+        return 0
+    try:
+        with open(TODO_FILE_PATH, "r", encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
+    except Exception:
+        return 0
 
 
 def ensure_todo_file_exists(todo_file: str) -> None:
@@ -1269,6 +1293,16 @@ def check_telegram_commands(
                     state=state,
                     force_send=True,
                 )
+        elif text == "/lunar":
+            lunar_str = get_lunar_date_string()
+            send_telegram_message(
+                session,
+                config,
+                settings,
+                f"📅 *Lunar Calendar (VN):* `{lunar_str}`",
+                state=state,
+                force_send=True,
+            )
         elif text == "/help":
             send_telegram_message(
                 session,
@@ -1283,6 +1317,7 @@ def check_telegram_commands(
                 "• `/sysinfo` – System information\n"
                 "• `/openai` – Usage and cost stats\n"
                 "• `/showtodo` – View the TODO list\n"
+                "• `/lunar` – View current lunar calendar (VN)\n"
                 "• `/help` – This reference\n"
                 "\n*🛠 Configuration:*\n"
                 "• `/config show` – View all runtime parameters\n"

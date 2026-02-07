@@ -9,6 +9,7 @@ It aims to be a simple bot and open for any integration, not stop here.
 - Python 3.9+
 - Binance Futures API key and secret with read-only access
 - Telegram bot token and target chat ID
+- `lunar-vn` library (installed via pip)
 
 ## Configuration
 
@@ -42,7 +43,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
-- Status message is organized into **Status** (Uptime, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
+- Status message is organized into **Status** (Uptime, Lunar Date, TODO count, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
 
 ## Telegram Commands
 
@@ -54,8 +55,9 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/aqi` – fetch current air quality index (requires IQAir API key)
 - `/uptime` – show the running time since launch
 - `/sysinfo` – display host CPU, RAM, and disk utilization
-- `/showtodo` – display the TODO list contents
 - `/openai` – report OpenAI Month-to-Date and Last Month costs
+- `/showtodo` – display the TODO list contents
+- `/lunar` – display current lunar calendar date (Vietnam)
 - `/help` – command reference
 
 **Configuration & Actions**
@@ -77,6 +79,8 @@ Comprehensive bot and portfolio snapshot:
 • Night mode: `True` (active: `False`)
 • Alert limit: `-20 USDT ~ 100 USDT`
 • Uptime: `24h,12m,5s`
+• Lunar Date: `20/12/2025`
+• TODO Left: `3`
 • Init Capital: `5,000.00 USDT`
 
 💰 *Spot Balance:*

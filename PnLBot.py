@@ -8,7 +8,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
+import re
+import html
+import sys
+import unicodedata
 
 import psutil
 import pytz
@@ -30,13 +34,13 @@ ASCII_STARTUP_BANNER = (
 STATE_FILE_PATH = "pnl-bot-state.json"
 TODO_FILE_PATH = "pnl-bot-todo-db.txt"
 TELEGRAM_API_URL = "https://api.telegram.org"
-TIMEZONE_NAME = "Asia/Ho_Chi_Minh"
-SYSTEM_CPU_ALERT_THRESHOLD = 80
-SYSTEM_MEMORY_ALERT_THRESHOLD = 80
-SYSTEM_DISK_ALERT_THRESHOLD = 90
-TELEGRAM_POLL_TIMEOUT = 25
 TELEGRAM_MAX_MESSAGE = 4096
 OPENAI_REFRESH_SECONDS = 300
+EVN_SPC_OUTAGE_URL = "https://www.cskh.evnspc.vn/TraCuu/GetThongTinLichNgungGiamCungCapDien"
+# Cache outages for some time to avoid frequent calls
+POWER_OUTAGE_REFRESH_SECONDS = 3600
+TELEGRAM_POLL_TIMEOUT = 30
+TIMEZONE_NAME = "Asia/Ho_Chi_Minh"
 
 
 def env_str(name: str, default: str) -> str:
@@ -82,7 +86,7 @@ class BotSettings:
 
 
 def load_bot_settings() -> BotSettings:
-    default_interval = env_int("PNL_BOT_DEFAULT_INTERVAL_SECONDS", 900)
+    default_interval = env_int("PNL_BOT_DEFAULT_INTERVAL_SECONDS", 3600)
     default_low = env_int("PNL_BOT_DEFAULT_PNL_ALERT_LOW", -20)
     default_high = env_int("PNL_BOT_DEFAULT_PNL_ALERT_HIGH", 20)
     night_mode_start = env_int("PNL_BOT_NIGHT_MODE_START_HOUR", 0)
@@ -115,6 +119,13 @@ class EnvConfig:
     iqair_api_key: Optional[str] = None
     iqair_latitude: float = 10.8231
     iqair_longitude: float = 106.6297
+    outage_street_filter: Optional[str] = None
+    evn_madvi: str = "YOUR_MADVI"
+    evn_area_name: str = "YOUR_AREA"
+    timezone: str = "Asia/Ho_Chi_Minh"
+    cpu_alert_threshold: int = 80
+    mem_alert_threshold: int = 80
+    disk_alert_threshold: int = 90
 
 
 @dataclass
@@ -136,6 +147,8 @@ class BotState:
     openai_usage: Optional[dict] = None
     openai_usage_error: Optional[str] = None
     openai_usage_lock: Lock = field(default_factory=Lock, repr=False)
+    power_outages: List[dict] = field(default_factory=list)
+    last_outage_check: float = 0.0
 
 
 @dataclass
@@ -250,8 +263,7 @@ def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_
 
 
 def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, key: str, tzinfo: datetime.tzinfo):
-    # Ignore tzinfo argument and use global constant
-    tz = pytz.timezone(TIMEZONE_NAME)
+    tz = pytz.timezone(config.timezone)
     now_local = datetime.datetime.now(tz)
     month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_start_epoch = epoch_utc(month_start_local)
@@ -338,6 +350,7 @@ def start_openai_usage_worker(
 
 def compose_status_message(
     state: BotState,
+    config: EnvConfig,
     status_info: Optional[str],
     current_pnl: Union[float, str],
     *,
@@ -351,7 +364,7 @@ def compose_status_message(
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
         f"• Uptime: `{get_uptime(state)}`",
-        f"• Lunar Date: `{get_lunar_date_string()}`",
+        f"• Lunar Date: `{get_lunar_date_string(config.timezone)}`",
         f"• TODO Left: `{get_todo_count()}`",
     ]
     if state.init_capital:
@@ -429,7 +442,8 @@ def load_env_config() -> EnvConfig:
             raise RuntimeError(f"Missing required environment variable: {name}")
         return value
 
-    return EnvConfig(
+
+    config = EnvConfig(
         api_key=require_env("API_KEY"),
         api_secret=require_env("API_SECRET"),
         telegram_token=require_env("TELEGRAM_TOKEN"),
@@ -438,7 +452,19 @@ def load_env_config() -> EnvConfig:
         iqair_api_key=os.getenv("IQAIR_API_KEY"),
         iqair_latitude=env_float("IQAIR_LATITUDE", 10.8231),
         iqair_longitude=env_float("IQAIR_LONGITUDE", 106.6297),
+        outage_street_filter=os.getenv("PNL_BOT_OUTAGE_STREET_FILTER"),
+        evn_madvi=env_str("PNL_BOT_EVN_MADVI", "PB0100"),
+        evn_area_name=env_str("PNL_BOT_EVN_AREA_NAME", "Ho Chi Minh"),
+        timezone=env_str("PNL_BOT_TIMEZONE", TIMEZONE_NAME),
+        cpu_alert_threshold=80,
+        mem_alert_threshold=80,
+        disk_alert_threshold=90,
     )
+    if config.outage_street_filter:
+        print(f"DEBUG: Outage Filter loaded: '{config.outage_street_filter}'", flush=True)
+    else:
+        print("DEBUG: No Outage Filter loaded.", flush=True)
+    return config
 
 
 def load_persisted_state(path: str) -> Optional[dict]:
@@ -491,6 +517,9 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         except (TypeError, ValueError):
             pass
 
+    state.power_outages = state_data.get("power_outages", state.power_outages)
+    state.last_outage_check = _safe_float(state_data.get("last_outage_check"), state.last_outage_check)
+
 
 def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> None:
     state_data = {
@@ -505,6 +534,8 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "min_spot_balance": state.min_spot_balance,
         "init_capital": state.init_capital,
         "night_mode_window": list(state.night_mode_window),
+        "power_outages": state.power_outages,
+        "last_outage_check": state.last_outage_check,
     }
     payload = {
         "state": state_data,
@@ -665,23 +696,23 @@ def get_top_processes(n: int = 5) -> Tuple[str, str]:
     top_mem = sorted(processes, key=lambda x: x["memory_percent"], reverse=True)[:n]
 
     cpu_info = "\n".join(
-        [f"`{proc['name']}` (PID {proc['pid']}): {proc['cpu_percent']}% CPU" for proc in top_cpu]
+        [f"• `{proc['name']}` (PID `{proc['pid']}`): `{proc['cpu_percent']}%` CPU" for proc in top_cpu]
     )
     mem_info = "\n".join(
-        [f"`{proc['name']}` (PID {proc['pid']}): {round(proc['memory_percent'], 1)}% RAM" for proc in top_mem]
+        [f"• `{proc['name']}` (PID `{proc['pid']}`): `{round(proc['memory_percent'], 1)}%` RAM" for proc in top_mem]
     )
     return cpu_info, mem_info
 
 
-def get_system_info_text(settings: BotSettings, show_all: bool = False) -> Optional[str]:
+def get_system_info_text(config: EnvConfig, settings: BotSettings, show_all: bool = False) -> Optional[str]:
     cpu = psutil.cpu_percent(interval=1)
     mem = psutil.virtual_memory().percent
     disk = psutil.disk_usage("/").percent
 
     is_alert = (
-        cpu > SYSTEM_CPU_ALERT_THRESHOLD
-        or mem > SYSTEM_MEMORY_ALERT_THRESHOLD
-        or disk > SYSTEM_DISK_ALERT_THRESHOLD
+        cpu > config.cpu_alert_threshold
+        or mem > config.mem_alert_threshold
+        or disk > config.disk_alert_threshold
     )
     if not show_all and not is_alert:
         return None
@@ -690,15 +721,39 @@ def get_system_info_text(settings: BotSettings, show_all: bool = False) -> Optio
     title = "*🖥 System Alert:*" if is_alert else "*📊 Current system metrics:*"
     info_lines.append(title)
 
-    info_lines.append(f"• CPU: `{cpu}%` (alert when > {SYSTEM_CPU_ALERT_THRESHOLD}%)")
-    info_lines.append(f"• RAM: `{mem}%` (alert when > {SYSTEM_MEMORY_ALERT_THRESHOLD}%)")
-    info_lines.append(f"• Disk: `{disk}%` (alert when > {SYSTEM_DISK_ALERT_THRESHOLD}%)")
+    def format_line(label, val, thresh):
+        exceeded = val > thresh
+        if exceeded:
+            return f"🔴 *{label}: `{val}%` (alert when > `{thresh}%`)*"
+        return f"• {label}: `{val}%` (alert when > `{thresh}%`)"
+
+    # Add lines: always if show_all, or only if exceeded if is_alert
+    for label, val, thresh in [
+        ("CPU", cpu, config.cpu_alert_threshold),
+        ("RAM", mem, config.mem_alert_threshold),
+        ("Disk", disk, config.disk_alert_threshold),
+    ]:
+        if show_all or val > thresh:
+            info_lines.append(format_line(label, val, thresh))
 
     top_cpu, top_mem = get_top_processes()
     info_lines.append("\n*⚙️ Top CPU processes:*\n" + top_cpu)
     info_lines.append("\n*💾 Top RAM processes:*\n" + top_mem)
 
     return "\n".join(info_lines)
+
+
+def remove_accents(input_str: str) -> str:
+    """Removes accents from Vietnamese characters, including the letter 'đ'."""
+    if not input_str:
+        return ""
+    # Normalize unicode to decompose accents
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    # Filter out non-spacing marks (accents)
+    s = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    # Specifically handle Vietnamese 'đ' and 'Đ'
+    s = s.replace('đ', 'd').replace('Đ', 'D')
+    return s
 
 
 def send_telegram_message(
@@ -711,7 +766,7 @@ def send_telegram_message(
     state: Optional[BotState] = None,
     force_send: bool = False,
 ) -> None:
-    tz = pytz.timezone(TIMEZONE_NAME)
+    tz = pytz.timezone(config.timezone)
 
     now_hour = datetime.datetime.now(tz).hour
     if state and state.night_mode_enabled and not force_send:
@@ -732,32 +787,137 @@ def send_telegram_message(
     try:
         if len(message) > TELEGRAM_MAX_MESSAGE:
             for idx in range(0, len(message), TELEGRAM_MAX_MESSAGE):
-                session.post(
+                res = session.post(
                     url,
                     data={**payload, "text": message[idx : idx + TELEGRAM_MAX_MESSAGE]},
                     timeout=10,
                 )
+                print(f"DEBUG: Telegram response chunk: {res.text}", flush=True)
+                res.raise_for_status()
         else:
-            session.post(url, data=payload, timeout=10)
+            res = session.post(url, data=payload, timeout=10)
+            print(f"DEBUG: Telegram response: {res.text}", flush=True)
+            res.raise_for_status()
     except Exception as exc:
-        print(f"Telegram send error: {exc}")
+        print(f"Telegram send error: {exc}", flush=True)
 
 
 def get_uptime(state: BotState) -> str:
     uptime_seconds = int(time.time() - state.start_time)
-    hours, remainder = divmod(uptime_seconds, 3600)
+
+    months, remainder = divmod(uptime_seconds, 2592000) # 30 days
+    days, remainder = divmod(remainder, 86400)
+    hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f"{hours}h,{minutes}m,{seconds}s"
+
+    parts = []
+    if months > 0:
+        parts.append(f"{months}mo")
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or (not parts):
+        parts.append(f"{hours}h")
+    if minutes > 0 or (not parts and hours == 0):
+        parts.append(f"{minutes}m")
+    if seconds > 0 or not parts:
+        parts.append(f"{seconds}s")
+
+    return ",".join(parts)
 
 
-def get_lunar_date_string() -> str:
+def get_lunar_date_string(timezone_name: str) -> str:
     try:
-        now = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
+        now = datetime.datetime.now(pytz.timezone(timezone_name))
         lunar = solar_to_lunar(now)
         leap_str = " (Nhuận)" if lunar.leap else ""
         return f"{lunar.day}/{lunar.month}/{lunar.year}{leap_str}"
     except Exception as exc:
         return f"Error: {exc}"
+
+
+def get_power_outages(session: requests.Session, config: EnvConfig) -> List[dict]:
+    """Fetches upcoming power outages from EVN SPC API, based on configured Ma Don Vi."""
+    tz = pytz.timezone(config.timezone)
+    now = datetime.datetime.now(tz)
+    tomorrow = now + datetime.timedelta(days=1)
+    end_date = now + datetime.timedelta(days=7)
+
+    params = {
+        "madvi": config.evn_madvi,
+        "tuNgay": now.strftime("%d-%m-%Y"),
+        "denNgay": end_date.strftime("%d-%m-%Y"),
+        "ChucNang": "MaDonVi",
+    }
+
+    try:
+        response = session.get(EVN_SPC_OUTAGE_URL, params=params, timeout=10)
+        response.raise_for_status()
+        html_content = response.text
+
+        # Robust parsing for the specific structure found in live responses
+        blocks = re.findall(r'<div class="entry">(.*?)</div>\s*<br />', html_content, re.DOTALL)
+
+        outages = []
+        for block in blocks:
+            # Area extraction
+            area_match = re.search(r'class="where"><b>KHU VỰC:</b>\s*(.*?)</span>', block, re.DOTALL)
+            # Time extraction (handling multi-line and whitespace)
+            time_match = re.search(r'class="time">.*?<span style="white-space:nowrap;">\s*(.*?)\s*</span>\s*</span>', block, re.DOTALL)
+            # Reason extraction
+            reason_match = re.search(r'class="cause">.*?<span>(.*?)</span>\s*</span>', block, re.DOTALL)
+
+            if area_match and time_match:
+                area = html.unescape(area_match.group(1).strip())
+                # Clean up time string (remove extra whitespace/newlines)
+                time_info = html.unescape(time_match.group(1).strip())
+                time_info = re.sub(r'\s+', ' ', time_info)
+
+                # Skip if filter is set and does not match area (accent-insensitive)
+                filter_str = config.outage_street_filter
+                if filter_str:
+                    normalized_area = remove_accents(area).lower()
+                    normalized_filter = remove_accents(filter_str).lower()
+                    print(f"DEBUG: Checking normalized area '{normalized_area}' against filter '{normalized_filter}'", flush=True)
+                    if normalized_filter not in normalized_area:
+                        print(f"DEBUG: Filter mismatch, skipping.", flush=True)
+                        continue
+                    print(f"DEBUG: Filter match!", flush=True)
+
+                reason = html.unescape(reason_match.group(1).strip()) if reason_match else "N/A"
+                reason = re.sub(r'\s+', ' ', reason)
+
+                # Use area + time as a unique key for deduplication
+                outage_id = hashlib.md5(f"{area}{time_info}".encode("utf-8")).hexdigest()
+
+                outages.append({
+                    "id": outage_id,
+                    "area": area,
+                    "time": time_info,
+                    "reason": reason
+                })
+        print(f"DEBUG: Found {len(outages)} outages for {config.evn_area_name}.", flush=True)
+        return outages
+    except Exception as exc:
+        print(f"Error fetching power outages: {exc}")
+        return []
+
+
+def refresh_power_outages(session: requests.Session, config: EnvConfig, state: BotState) -> List[dict]:
+    """Updates the state with new power outages and returns only the NEW ones."""
+    current_outages = get_power_outages(session, config)
+    if not current_outages:
+        return []
+
+    seen_ids = {o["id"] for o in state.power_outages}
+    new_outages = [o for o in current_outages if o["id"] not in seen_ids]
+
+    # Keep only current and future outages in state
+    # Since we don't have perfect date parsing here, we'll just keep the latest results
+    # and filter by ID to find truly new ones.
+    state.power_outages = current_outages
+    state.last_outage_check = time.time()
+
+    return new_outages
 
 
 def get_todo_count() -> int:
@@ -845,6 +1005,7 @@ CONFIG_ORDER = [
     "night_mode_start_hour",
     "night_mode_end_hour",
     "init_capital",
+    "outage_filter",
 ]
 
 
@@ -897,25 +1058,34 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         getter=lambda state, settings: state.init_capital or 0.0,
         applier=lambda value, state, settings: setattr(state, "init_capital", value if value > 0 else None),
     ),
+    "outage_filter": ConfigDefinition(
+        description="Power outage street filter (env only)",
+        parser=lambda raw, state, settings: raw,
+        getter=lambda state, settings: "N/A",  # Overridden in listing
+        applier=lambda value, state, settings: None,
+    ),
 }
 
 
-def format_config_listing(state: BotState, settings: BotSettings) -> str:
+def format_config_listing(state: BotState, settings: BotSettings, config: EnvConfig) -> str:
     lines = ["*⚙️ Runtime configuration:*"]
     for key in CONFIG_ORDER:
         definition = CONFIG_DEFINITIONS[key]
-        value = definition.getter(state, settings)
+        if key == "outage_filter":
+            value = config.outage_street_filter or "None"
+        else:
+            value = definition.getter(state, settings)
         lines.append(
             f"• `{key}`: `{format_config_value(value)}` – {definition.description}"
         )
     return "\n".join(lines)
 
 
-def handle_config_command(text: str, state: BotState, settings: BotSettings) -> str:
+def handle_config_command(text: str, state: BotState, settings: BotSettings, config: EnvConfig) -> str:
     tokens = text.split(maxsplit=3)
 
     if len(tokens) == 1 or (len(tokens) >= 2 and tokens[1].lower() == "show"):
-        return format_config_listing(state, settings)
+        return format_config_listing(state, settings, config)
 
     if len(tokens) < 2:
         return "❌ Usage: `/config show|get|set`"
@@ -993,14 +1163,30 @@ def check_telegram_commands(
             latest_id = uid
 
         message = update.get("message", {})
-        text = (message.get("text") or "").strip()
+        original_text = (message.get("text") or "").strip()
         chat_id = str(message.get("chat", {}).get("id", ""))
+
+        if not original_text.startswith("/"):
+            continue
+
+        # Extract base command and handle @botname suffix
+        parts = original_text.split()
+        cmd_part = parts[0].lower()
+        if "@" in cmd_part:
+            cmd_part = cmd_part.split("@")[0]
+
+        text = cmd_part
+        if len(parts) > 1:
+            text += " " + " ".join(parts[1:])
+
+        if text.startswith("/"):
+            print(f"DEBUG: Received command '{text}' (original: '{original_text}') from chat_id '{chat_id}'", flush=True)
 
         if chat_id != str(config.telegram_chat_id):
             continue
 
-        if text.startswith("/config"):
-            response = handle_config_command(text, state, settings)
+        if text == "/config" or text.startswith("/config "):
+            response = handle_config_command(text, state, settings, config)
             send_telegram_message(
                 session,
                 config,
@@ -1038,14 +1224,14 @@ def check_telegram_commands(
                 session,
                 config,
                 settings,
-                compose_status_message(state, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
+                compose_status_message(state, config, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
                 state=state,
                 force_send=True,
             )
             if state_changed:
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text == "/stop":
-            handle_config_command("/config set bot_running off", state, settings)
+            handle_config_command("/config set bot_running off", state, settings, config)
             send_telegram_message(
                 session,
                 config,
@@ -1055,7 +1241,7 @@ def check_telegram_commands(
                 force_send=True,
             )
         elif text == "/start":
-            handle_config_command("/config set bot_running on", state, settings)
+            handle_config_command("/config set bot_running on", state, settings, config)
             send_telegram_message(
                 session,
                 config,
@@ -1077,12 +1263,12 @@ def check_telegram_commands(
                     session,
                     config,
                     settings,
-                    f"📊 PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`",
+                    f"📊 PnL: `{pnl}` USDT, `[{state.min_pnl},{state.max_pnl}]`",
                     state=state,
                     force_send=True,
                 )
             else:
-                send_telegram_message(session, config, settings, pnl, state=state, force_send=True)
+                send_telegram_message(session, config, settings, f"`{pnl}`", state=state, force_send=True)
             if state_changed:
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text in {"/openai", "/openaiusage"}:
@@ -1123,7 +1309,29 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
-        elif text.startswith("/spot"):
+        elif text == "/showtodo":
+            print("DEBUG: Processing /showtodo command", flush=True)
+            todos = read_todos(TODO_FILE_PATH)
+            if todos:
+                # Use a code block to prevent Markdown parsing errors with special characters
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    f"*📋 TODO list:*\n```text\n{todos}\n```",
+                    state=state,
+                    force_send=True,
+                )
+            else:
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    "📭 The TODO list is currently empty.",
+                    state=state,
+                    force_send=True,
+                )
+        elif text == "/spot" or text.startswith("/spot "):
             # specific logic to allow "/spot reset"
             parts = text.split()
             reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
@@ -1182,6 +1390,20 @@ def check_telegram_commands(
                 )
             else:
                 send_telegram_message(session, config, settings, spot_balance, state=state, force_send=True)
+        elif text == "/outage":
+            outages = get_power_outages(session, config)
+            if outages:
+                filter_info = f" (Street: `{config.outage_street_filter}`)" if config.outage_street_filter else ""
+                lines = [f"📅 *Upcoming Power Outages ({config.evn_area_name}){filter_info}:*"]
+                for o in outages:
+                    lines.append(f"• `{o['time']}`")
+                    lines.append(f"  ▫️ Area: `{o['area']}`")
+                    lines.append(f"  ▫️ Reason: `{o['reason']}`")
+                message = "\n".join(lines)
+            else:
+                message = f"✅ No power outages scheduled for the next 7 days in {config.evn_area_name}."
+
+            send_telegram_message(session, config, settings, message, state=state, force_send=True)
         elif text == "/uptime":
             send_telegram_message(
                 session,
@@ -1192,7 +1414,7 @@ def check_telegram_commands(
                 force_send=True,
             )
         elif text == "/sysinfo":
-            sysinfo = get_system_info_text(settings, show_all=True)
+            sysinfo = get_system_info_text(config, settings, show_all=True)
             send_telegram_message(
                 session,
                 config,
@@ -1227,7 +1449,7 @@ def check_telegram_commands(
 
                 message = (
                     f"{aqi_emoji} *Air Quality - {aqi_data.get('city', 'N/A')}*\n"
-                    f"• AQI (US): `{aqi_us}` - {aqi_level}\n"
+                    f"• AQI (US): `{aqi_us}` - `{aqi_level}`\n"
                     f"• Temperature: `{aqi_data.get('temperature', 0)}°C`\n"
                     f"• Humidity: `{aqi_data.get('humidity', 0)}%`"
                 )
@@ -1242,7 +1464,7 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
-        elif text.startswith("/todo"):
+        elif text == "/todo" or text.startswith("/todo "):
             todo_item = text[len("/todo") :].strip()
             if todo_item:
                 try:
@@ -1273,26 +1495,6 @@ def check_telegram_commands(
                     state=state,
                     force_send=True,
                 )
-        elif text == "/showtodo":
-            todos = read_todos(TODO_FILE_PATH)
-            if todos:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    f"*📋 TODO list:*\n{todos}",
-                    state=state,
-                    force_send=True,
-                )
-            else:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    "📭 The TODO list is currently empty.",
-                    state=state,
-                    force_send=True,
-                )
         elif text == "/lunar":
             lunar_str = get_lunar_date_string()
             send_telegram_message(
@@ -1318,6 +1520,7 @@ def check_telegram_commands(
                 "• `/openai` – Usage and cost stats\n"
                 "• `/showtodo` – View the TODO list\n"
                 "• `/lunar` – View current lunar calendar (VN)\n"
+                "• `/outage` – View power outage schedule\n"
                 "• `/help` – This reference\n"
                 "\n*🛠 Configuration:*\n"
                 "• `/config show` – View all runtime parameters\n"
@@ -1329,14 +1532,16 @@ def check_telegram_commands(
                 force_send=True,
             )
         elif text.startswith("/"):
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                "⚠️ Unsupported command. Type `/help` for the command list.",
-                state=state,
-                force_send=True,
-            )
+            # Ensure we don't catch just "/" or very short noise
+            if len(text.split()[0]) > 1:
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    "⚠️ Unsupported command. Type `/help` for the command list.",
+                    state=state,
+                    force_send=True,
+                )
 
     return latest_id
 
@@ -1404,11 +1609,11 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
     futures_msg = ""
     if pnl != 0.0:
         if pnl <= state.pnl_alert_low:
-            futures_msg = f"Heavy loss: 🔻 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+            futures_msg = f"Heavy loss: 🔻 `{pnl}` USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
         elif pnl >= state.pnl_alert_high:
-            futures_msg = f"High profit: 🟢 {pnl} USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+            futures_msg = f"High profit: 🟢 `{pnl}` USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
         else:
-            futures_msg = f"📊 Futures PnL: {pnl} USDT, `[{state.min_pnl},{state.max_pnl}]`"
+            futures_msg = f"📊 Futures PnL: `{pnl}` USDT, `[{state.min_pnl},{state.max_pnl}]`"
 
     # Format AQI message
     aqi_msg = ""
@@ -1441,10 +1646,22 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             state=state,
         )
 
+    # Power Outage Check
+    if time.time() - state.last_outage_check >= POWER_OUTAGE_REFRESH_SECONDS:
+        new_outages = refresh_power_outages(session, config, state)
+        if new_outages:
+            lines = ["⚡ *NEW Power Outage detected!*"]
+            for o in new_outages:
+                lines.append(f"• `{o['time']}`")
+                lines.append(f"  ▫️ Area: `{o['area']}`")
+                lines.append(f"  ▫️ Reason: `{o['reason']}`")
+            send_telegram_message(session, config, settings, "\n".join(lines), state=state, force_send=True)
+        state_changed = True
+
     if state_changed:
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
-    system_info = get_system_info_text(settings)
+    system_info = get_system_info_text(config, settings)
     if system_info:
         send_telegram_message(session, config, settings, system_info, state=state)
 
@@ -1548,7 +1765,7 @@ def main() -> None:
             session,
             config,
             settings,
-            compose_status_message(state, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
+            compose_status_message(state, config, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
             state=state,
             force_send=True,
         )
@@ -1566,7 +1783,7 @@ def main() -> None:
                 poll_timeout,
             )
 
-            tz_now = datetime.datetime.now(pytz.timezone(TIMEZONE_NAME))
+            tz_now = datetime.datetime.now(pytz.timezone(config.timezone))
             start_hour, end_hour = state.night_mode_window
             if start_hour <= end_hour:
                 in_night_window = state.night_mode_enabled and start_hour <= tz_now.hour < end_hour

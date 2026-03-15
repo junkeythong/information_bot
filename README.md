@@ -30,6 +30,10 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_NIGHT_MODE_START_HOUR` (0) – start of quiet window (0-23)
 - `PNL_BOT_NIGHT_MODE_END_HOUR` (5) – end of quiet window (1-24)
 - `PNL_BOT_INIT_CAPITAL` (0) – initial capital for PnL % calculation (optional)
+- `PNL_BOT_OUTAGE_STREET_FILTER` – only report/alert power outages containing this street/area string (optional, e.g., `Tà Nung`, `Ngô Quyền`)
+- `PNL_BOT_EVN_MADVI` – Ma Don Vi for EVN outage check (optional, default: `PB0100`)
+- `PNL_BOT_EVN_AREA_NAME` – Human readable area name for outages (optional, default: `Ho Chi Minh`)
+- `PNL_BOT_TIMEZONE` – System timezone (optional, default: `Asia/Ho_Chi_Minh`)
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -43,6 +47,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
+- **Power Outages**: Can fetch schedules for the configured area from EVN SPC via the `/outage` command. Supports filtering by street using `PNL_BOT_OUTAGE_STREET_FILTER`.
 - Status message is organized into **Status** (Uptime, Lunar Date, TODO count, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
 
 ## Telegram Commands
@@ -58,6 +63,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/openai` – report OpenAI Month-to-Date and Last Month costs
 - `/showtodo` – display the TODO list contents
 - `/lunar` – display current lunar calendar date (Vietnam)
+- `/outage` – display upcoming power outage schedule for the configured area
 - `/help` – command reference
 
 **Configuration & Actions**
@@ -123,12 +129,22 @@ Current air quality information:
 - TODO entries: `pnl-bot-todo-db.txt` (hardcoded)
 - Timezone: `Asia/Ho_Chi_Minh` (hardcoded)
 - System Alerts: CPU/RAM 80%, Disk 90% (hardcoded)
-- Telegram: Poll 25s, Max Msg 4096 (hardcoded)
+- Telegram: Poll 30s, Max Msg 4096 (hardcoded)
 
 ## Quick Start
 
 1. Export required environment variables (see Configuration).
-2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz` are available), should be installed in a venv directory.
+   Example `.env` file:
+   ```bash
+   API_KEY=your_binance_key
+   API_SECRET=your_binance_secret
+   TELEGRAM_TOKEN=123456:ABC-DEF
+   TELEGRAM_CHAT_ID=987654321
+   PNL_BOT_INIT_CAPITAL=1000.0
+   PNL_BOT_OUTAGE_STREET_FILTER="Phan Chu Trinh"
+   IQAIR_API_KEY=your_iqair_key
+   ```
+2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz`, `lunar-vn` are available), should be installed in a venv directory.
 3. Run the bot: `python PnLBot.py`.
 4. Send `/status` from the configured Telegram chat to confirm connectivity.
 

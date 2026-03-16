@@ -30,10 +30,13 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_NIGHT_MODE_START_HOUR` (0) – start of quiet window (0-23)
 - `PNL_BOT_NIGHT_MODE_END_HOUR` (5) – end of quiet window (1-24)
 - `PNL_BOT_INIT_CAPITAL` (0) – initial capital for PnL % calculation (optional)
-- `PNL_BOT_OUTAGE_STREET_FILTER` – only report/alert power outages containing this street/area string (optional, e.g., `Tà Nung`, `Ngô Quyền`)
+- `PNL_BOT_OUTAGE_STREET_FILTER` – only report/alert power outages containing this street/area string (optional, e.g., `Phan Dinh Phung`)
 - `PNL_BOT_EVN_MADVI` – Ma Don Vi for EVN outage check (optional, default: `PB0100`)
 - `PNL_BOT_EVN_AREA_NAME` – Human readable area name for outages (optional, default: `Ho Chi Minh`)
 - `PNL_BOT_TIMEZONE` – System timezone (optional, default: `Asia/Ho_Chi_Minh`)
+- `PNL_BOT_CPU_ALERT_THRESHOLD` – CPU usage alert threshold (optional, default: `80`)
+- `PNL_BOT_MEM_ALERT_THRESHOLD` – RAM usage alert threshold (optional, default: `80`)
+- `PNL_BOT_DISK_ALERT_THRESHOLD` – Disk usage alert threshold (optional, default: `90`)
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -127,9 +130,9 @@ Current air quality information:
 - PnL bot script: `PnLBot.py`
 - State snapshot: `pnl-bot-state.json` (hardcoded)
 - TODO entries: `pnl-bot-todo-db.txt` (hardcoded)
-- Timezone: `Asia/Ho_Chi_Minh` (hardcoded)
-- System Alerts: CPU/RAM 80%, Disk 90% (hardcoded)
-- Telegram: Poll 30s, Max Msg 4096 (hardcoded)
+- Timezone: Configurable via `PNL_BOT_TIMEZONE` (default: `Asia/Ho_Chi_Minh`)
+- System Alerts: Configurable via `PNL_BOT_*_ALERT_THRESHOLD`
+- Telegram: Poll interval and max message size are managed automatically
 
 ## Quick Start
 

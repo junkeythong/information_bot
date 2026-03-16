@@ -119,8 +119,8 @@ class EnvConfig:
     iqair_latitude: float = 10.8231
     iqair_longitude: float = 106.6297
     outage_street_filter: Optional[str] = None
-    evn_madvi: str = "YOUR_MADVI"
-    evn_area_name: str = "YOUR_AREA"
+    evn_madvi: str = "PB0100"
+    evn_area_name: str = "Ho Chi Minh"
     timezone: str = "Asia/Ho_Chi_Minh"
     cpu_alert_threshold: int = 80
     mem_alert_threshold: int = 80

@@ -40,7 +40,6 @@ EVN_SPC_OUTAGE_URL = "https://www.cskh.evnspc.vn/TraCuu/GetThongTinLichNgungGiam
 # Cache outages for some time to avoid frequent calls
 POWER_OUTAGE_REFRESH_SECONDS = 3600
 TELEGRAM_POLL_TIMEOUT = 30
-TIMEZONE_NAME = "Asia/Ho_Chi_Minh"
 
 
 def env_str(name: str, default: str) -> str:
@@ -455,10 +454,10 @@ def load_env_config() -> EnvConfig:
         outage_street_filter=os.getenv("PNL_BOT_OUTAGE_STREET_FILTER"),
         evn_madvi=env_str("PNL_BOT_EVN_MADVI", "PB0100"),
         evn_area_name=env_str("PNL_BOT_EVN_AREA_NAME", "Ho Chi Minh"),
-        timezone=env_str("PNL_BOT_TIMEZONE", TIMEZONE_NAME),
-        cpu_alert_threshold=80,
-        mem_alert_threshold=80,
-        disk_alert_threshold=90,
+        timezone=env_str("PNL_BOT_TIMEZONE", "Asia/Ho_Chi_Minh"),
+        cpu_alert_threshold=env_int("PNL_BOT_CPU_ALERT_THRESHOLD", 80),
+        mem_alert_threshold=env_int("PNL_BOT_MEM_ALERT_THRESHOLD", 80),
+        disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 90),
     )
     if config.outage_street_filter:
         print(f"DEBUG: Outage Filter loaded: '{config.outage_street_filter}'", flush=True)

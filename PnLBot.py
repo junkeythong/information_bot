@@ -124,7 +124,7 @@ class EnvConfig:
     timezone: str = "Asia/Ho_Chi_Minh"
     cpu_alert_threshold: int = 80
     mem_alert_threshold: int = 80
-    disk_alert_threshold: int = 90
+    disk_alert_threshold: int = 80
 
 
 @dataclass
@@ -457,7 +457,7 @@ def load_env_config() -> EnvConfig:
         timezone=env_str("PNL_BOT_TIMEZONE", "Asia/Ho_Chi_Minh"),
         cpu_alert_threshold=env_int("PNL_BOT_CPU_ALERT_THRESHOLD", 80),
         mem_alert_threshold=env_int("PNL_BOT_MEM_ALERT_THRESHOLD", 80),
-        disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 90),
+        disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 80),
     )
     if config.outage_street_filter:
         print(f"DEBUG: Outage Filter loaded: '{config.outage_street_filter}'", flush=True)
@@ -1004,6 +1004,10 @@ CONFIG_ORDER = [
     "night_mode_start_hour",
     "night_mode_end_hour",
     "init_capital",
+    "max_pnl",
+    "min_pnl",
+    "max_spot_balance",
+    "min_spot_balance",
     "outage_filter",
 ]
 
@@ -1056,6 +1060,30 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         parser=lambda raw, state, settings: parse_float_value(raw, minimum=0.0),
         getter=lambda state, settings: state.init_capital or 0.0,
         applier=lambda value, state, settings: setattr(state, "init_capital", value if value > 0 else None),
+    ),
+    "max_pnl": ConfigDefinition(
+        description="Historical maximum unrealized futures PnL",
+        parser=lambda raw, state, settings: parse_float_value(raw),
+        getter=lambda state, settings: state.max_pnl,
+        applier=lambda value, state, settings: setattr(state, "max_pnl", value),
+    ),
+    "min_pnl": ConfigDefinition(
+        description="Historical minimum unrealized futures PnL",
+        parser=lambda raw, state, settings: parse_float_value(raw),
+        getter=lambda state, settings: state.min_pnl,
+        applier=lambda value, state, settings: setattr(state, "min_pnl", value),
+    ),
+    "max_spot_balance": ConfigDefinition(
+        description="Historical maximum total spot USDT balance",
+        parser=lambda raw, state, settings: parse_float_value(raw, minimum=0.0),
+        getter=lambda state, settings: state.max_spot_balance,
+        applier=lambda value, state, settings: setattr(state, "max_spot_balance", value),
+    ),
+    "min_spot_balance": ConfigDefinition(
+        description="Historical minimum total spot USDT balance",
+        parser=lambda raw, state, settings: parse_float_value(raw, minimum=0.0),
+        getter=lambda state, settings: state.min_spot_balance,
+        applier=lambda value, state, settings: setattr(state, "min_spot_balance", value),
     ),
     "outage_filter": ConfigDefinition(
         description="Power outage street filter (env only)",
@@ -1403,15 +1431,6 @@ def check_telegram_commands(
                 message = f"✅ No power outages scheduled for the next 7 days in {config.evn_area_name}."
 
             send_telegram_message(session, config, settings, message, state=state, force_send=True)
-        elif text == "/uptime":
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                f"⏳ Bot uptime: `{get_uptime(state)}`",
-                state=state,
-                force_send=True,
-            )
         elif text == "/sysinfo":
             sysinfo = get_system_info_text(config, settings, show_all=True)
             send_telegram_message(
@@ -1495,7 +1514,7 @@ def check_telegram_commands(
                     force_send=True,
                 )
         elif text == "/lunar":
-            lunar_str = get_lunar_date_string()
+            lunar_str = get_lunar_date_string(config.timezone)
             send_telegram_message(
                 session,
                 config,
@@ -1514,7 +1533,6 @@ def check_telegram_commands(
                 "• `/pnl` – Quick unrealized PnL check\n"
                 "• `/spot` – Quick spot balance check\n"
                 "• `/aqi` – Air quality index (IQAir)\n"
-                "• `/uptime` – Bot uptime\n"
                 "• `/sysinfo` – System information\n"
                 "• `/openai` – Usage and cost stats\n"
                 "• `/showtodo` – View the TODO list\n"
@@ -1755,6 +1773,7 @@ def main() -> None:
                 if state.min_spot_balance == 0: state.min_spot_balance = total_s
                 state.max_spot_balance = max(state.max_spot_balance, total_s)
                 state.min_spot_balance = min(state.min_spot_balance, total_s)
+                persist_runtime_state(STATE_FILE_PATH, state, settings)
 
 
 

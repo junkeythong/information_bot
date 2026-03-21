@@ -36,7 +36,7 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_TIMEZONE` – System timezone (optional, default: `Asia/Ho_Chi_Minh`)
 - `PNL_BOT_CPU_ALERT_THRESHOLD` – CPU usage alert threshold (optional, default: `80`)
 - `PNL_BOT_MEM_ALERT_THRESHOLD` – RAM usage alert threshold (optional, default: `80`)
-- `PNL_BOT_DISK_ALERT_THRESHOLD` – Disk usage alert threshold (optional, default: `90`)
+- `PNL_BOT_DISK_ALERT_THRESHOLD` – Disk usage alert threshold (optional, default: 80`)
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -61,7 +61,6 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/pnl` – fetch the latest unrealized PnL immediately
 - `/spot` – fetch spot wallet breakdown
 - `/aqi` – fetch current air quality index (requires IQAir API key)
-- `/uptime` – show the running time since launch
 - `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/openai` – report OpenAI Month-to-Date and Last Month costs
 - `/showtodo` – display the TODO list contents
@@ -72,7 +71,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 **Configuration & Actions**
 
 - `/config show` – View all runtime parameters
-- `/config set <key> <value>` – Update a parameter (interval, limits, bot state)
+- `/config set <key> <value>` – Update a parameter (interval, limits, bot state, or historical min/max bounds)
 - `/start`, `/stop` – Resume or pause automatic monitoring alerts
 - `/todo <text>` – append to the local TODO list
 - `/spot reset` – reset clear min/max history

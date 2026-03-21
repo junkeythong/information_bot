@@ -52,6 +52,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
 - **Power Outages**: Can fetch schedules for the configured area from EVN SPC via the `/outage` command. Supports filtering by street using `PNL_BOT_OUTAGE_STREET_FILTER`.
 - Status message is organized into **Status** (Uptime, Lunar Date, TODO count, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
+- Sends a daily **lunar date notification** at 8:00 AM local time.
 
 ## Telegram Commands
 
@@ -64,7 +65,6 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/sysinfo` – display host CPU, RAM, and disk utilization
 - `/openai` – report OpenAI Month-to-Date and Last Month costs
 - `/showtodo` – display the TODO list contents
-- `/lunar` – display current lunar calendar date (Vietnam)
 - `/outage` – display upcoming power outage schedule for the configured area
 - `/help` – command reference
 
@@ -87,7 +87,7 @@ Comprehensive bot and portfolio snapshot:
 • Night mode: `True` (active: `False`)
 • Alert limit: `-20 USDT ~ 100 USDT`
 • Uptime: `24h,12m,5s`
-• Lunar Date: `20/12/2025`
+• Lunar: `Mùng 3 Tháng 2 Năm Bính Ngọ`
 • TODO Left: `3`
 • Init Capital: `5,000.00 USDT`
 

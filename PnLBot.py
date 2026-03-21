@@ -19,7 +19,7 @@ import pytz
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from lunar_vn import solar_to_lunar
+from lunar_vn import solar_to_lunar, can_chi, holidays
 
 
 OPENAI_COSTS_URL = "https://api.openai.com/v1/organization/costs"
@@ -148,6 +148,7 @@ class BotState:
     openai_usage_lock: Lock = field(default_factory=Lock, repr=False)
     power_outages: List[dict] = field(default_factory=list)
     last_outage_check: float = 0.0
+    last_lunar_alert_date: Optional[str] = None
 
 
 @dataclass
@@ -363,9 +364,11 @@ def compose_status_message(
         f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
         f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
         f"• Uptime: `{get_uptime(state)}`",
-        f"• Lunar Date: `{get_lunar_date_string(config.timezone)}`",
-        f"• TODO Left: `{get_todo_count()}`",
+        f"• Lunar: `{get_lunar_date_string(config.timezone)}`",
     ]
+    todo_count = get_todo_count()
+    if todo_count > 0:
+        lines.append(f"• TODO Left: `{todo_count}`")
     if state.init_capital:
         lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
 
@@ -505,6 +508,7 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
     state.init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
+    state.last_lunar_alert_date = state_data.get("last_lunar_alert_date", state.last_lunar_alert_date)
 
     night_window = state_data.get("night_mode_window")
     if isinstance(night_window, (list, tuple)) and len(night_window) == 2:
@@ -535,6 +539,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "night_mode_window": list(state.night_mode_window),
         "power_outages": state.power_outages,
         "last_outage_check": state.last_outage_check,
+        "last_lunar_alert_date": state.last_lunar_alert_date,
     }
     payload = {
         "state": state_data,
@@ -828,8 +833,14 @@ def get_lunar_date_string(timezone_name: str) -> str:
     try:
         now = datetime.datetime.now(pytz.timezone(timezone_name))
         lunar = solar_to_lunar(now)
-        leap_str = " (Nhuận)" if lunar.leap else ""
-        return f"{lunar.day}/{lunar.month}/{lunar.year}{leap_str}"
+        day_str = f"Mùng `{lunar.day}`" if lunar.day <= 10 else f"`{lunar.day}`"
+        month_str = f"Tháng `{lunar.month}`"
+        if lunar.leap:
+            month_str += " (Nhuận)"
+        year_can_chi = can_chi.get_year_can_chi(lunar.year)
+        holiday = holidays.get_holiday(now.date(), lunar)
+        holiday_str = f" - `{holiday}`" if holiday else ""
+        return f"{day_str} {month_str} Năm `{year_can_chi}`{holiday_str}"
     except Exception as exc:
         return f"Error: {exc}"
 
@@ -1513,16 +1524,6 @@ def check_telegram_commands(
                     state=state,
                     force_send=True,
                 )
-        elif text == "/lunar":
-            lunar_str = get_lunar_date_string(config.timezone)
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                f"📅 *Lunar Calendar (VN):* `{lunar_str}`",
-                state=state,
-                force_send=True,
-            )
         elif text == "/help":
             send_telegram_message(
                 session,
@@ -1536,7 +1537,6 @@ def check_telegram_commands(
                 "• `/sysinfo` – System information\n"
                 "• `/openai` – Usage and cost stats\n"
                 "• `/showtodo` – View the TODO list\n"
-                "• `/lunar` – View current lunar calendar (VN)\n"
                 "• `/outage` – View power outage schedule\n"
                 "• `/help` – This reference\n"
                 "\n*🛠 Configuration:*\n"
@@ -1830,6 +1830,20 @@ def main() -> None:
                     state=state,
                     force_send=True,
                 )
+
+            # 8:00 AM Daily Lunar Alert
+            if tz_now.hour == 8 and state.last_lunar_alert_date != tz_now.strftime("%Y-%m-%d"):
+                lunar_str = get_lunar_date_string(config.timezone)
+                send_telegram_message(
+                    session,
+                    config,
+                    settings,
+                    f"📅 *Chào buổi sáng! Hôm nay là:* `{lunar_str}`",
+                    state=state,
+                    force_send=True,
+                )
+                state.last_lunar_alert_date = tz_now.strftime("%Y-%m-%d")
+                persist_runtime_state(STATE_FILE_PATH, state, settings)
 
             now = time.time()
             if state.is_running and now - last_run >= state.interval_seconds:

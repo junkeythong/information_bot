@@ -36,7 +36,7 @@ set at runtime are persisted to the state file so they survive restarts.
 - `PNL_BOT_TIMEZONE` – System timezone (optional, default: `Asia/Ho_Chi_Minh`)
 - `PNL_BOT_CPU_ALERT_THRESHOLD` – CPU usage alert threshold (optional, default: `80`)
 - `PNL_BOT_MEM_ALERT_THRESHOLD` – RAM usage alert threshold (optional, default: `80`)
-- `PNL_BOT_DISK_ALERT_THRESHOLD` – Disk usage alert threshold (optional, default: 80`)
+- `PNL_BOT_DISK_ALERT_THRESHOLD` – Disk usage alert threshold (optional, default: `90`)
 
 Set the variables in your shell or an `.env` file before launching the bot.
 
@@ -47,12 +47,12 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - Persists editable runtime settings (interval, thresholds, run state, PnL and Spot bounds) to the JSON state file whenever they change
 - Hides Spot and Futures sections in the notification loop if their respective balance or PnL is zero
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours
-- CPU/RAM/disk alert thresholds are hardcoded and only displayed on alert or via `/sysinfo`
+- CPU/RAM/disk alert thresholds are hardcoded and checked in near real-time via a background worker thread. Alert thresholds are only displayed on alert or via `/sysinfo`
 - When `OPENAI_ADMIN_KEY` is supplied, the bot refreshes OpenAI month-to-date cost in the background
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
 - **Power Outages**: Can fetch schedules for the configured area from EVN SPC via the `/outage` command. Supports filtering by street using `PNL_BOT_OUTAGE_STREET_FILTER`.
 - Status message is organized into **Status** (Uptime, Lunar Date, TODO count, Init Capital, Config), **Spot Balance** (including ranges, token prices, and PnL %), and **Futures PnL** sections
-- Sends a daily **lunar date notification** at 8:00 AM local time.
+- Sends a daily **lunar date and OpenAI usage notification** at 8:00 AM local time.
 
 ## Telegram Commands
 

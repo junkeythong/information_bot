@@ -124,7 +124,7 @@ class EnvConfig:
     timezone: str = "Asia/Ho_Chi_Minh"
     cpu_alert_threshold: int = 80
     mem_alert_threshold: int = 80
-    disk_alert_threshold: int = 80
+    disk_alert_threshold: int = 90
 
 
 @dataclass
@@ -348,6 +348,33 @@ def start_openai_usage_worker(
     return thread
 
 
+def start_system_monitor_worker(
+    session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState
+) -> threading.Thread:
+    def worker():
+        last_alert_time = 0
+        while True:
+            try:
+                time.sleep(5)  # Near real-time check every 5 seconds
+                if not state.is_running:
+                    continue
+
+                system_info = get_system_info_text(config, settings)
+                if system_info:
+                    now = time.time()
+                    # 5 minutes cooldown to avoid alert spam
+                    if now - last_alert_time > 300:
+                        send_telegram_message(session, config, settings, system_info, state=state, force_send=True)
+                        last_alert_time = now
+            except Exception as exc:
+                print(f"System monitor worker error: {exc}")
+                time.sleep(10)
+
+    thread = threading.Thread(target=worker, name="system-monitor-worker", daemon=True)
+    thread.start()
+    return thread
+
+
 def compose_status_message(
     state: BotState,
     config: EnvConfig,
@@ -460,12 +487,8 @@ def load_env_config() -> EnvConfig:
         timezone=env_str("PNL_BOT_TIMEZONE", "Asia/Ho_Chi_Minh"),
         cpu_alert_threshold=env_int("PNL_BOT_CPU_ALERT_THRESHOLD", 80),
         mem_alert_threshold=env_int("PNL_BOT_MEM_ALERT_THRESHOLD", 80),
-        disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 80),
+        disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 90),
     )
-    if config.outage_street_filter:
-        print(f"DEBUG: Outage Filter loaded: '{config.outage_street_filter}'", flush=True)
-    else:
-        print("DEBUG: No Outage Filter loaded.", flush=True)
     return config
 
 
@@ -796,11 +819,9 @@ def send_telegram_message(
                     data={**payload, "text": message[idx : idx + TELEGRAM_MAX_MESSAGE]},
                     timeout=10,
                 )
-                print(f"DEBUG: Telegram response chunk: {res.text}", flush=True)
                 res.raise_for_status()
         else:
             res = session.post(url, data=payload, timeout=10)
-            print(f"DEBUG: Telegram response: {res.text}", flush=True)
             res.raise_for_status()
     except Exception as exc:
         print(f"Telegram send error: {exc}", flush=True)
@@ -887,11 +908,8 @@ def get_power_outages(session: requests.Session, config: EnvConfig) -> List[dict
                 if filter_str:
                     normalized_area = remove_accents(area).lower()
                     normalized_filter = remove_accents(filter_str).lower()
-                    print(f"DEBUG: Checking normalized area '{normalized_area}' against filter '{normalized_filter}'", flush=True)
                     if normalized_filter not in normalized_area:
-                        print(f"DEBUG: Filter mismatch, skipping.", flush=True)
                         continue
-                    print(f"DEBUG: Filter match!", flush=True)
 
                 reason = html.unescape(reason_match.group(1).strip()) if reason_match else "N/A"
                 reason = re.sub(r'\s+', ' ', reason)
@@ -905,7 +923,6 @@ def get_power_outages(session: requests.Session, config: EnvConfig) -> List[dict
                     "time": time_info,
                     "reason": reason
                 })
-        print(f"DEBUG: Found {len(outages)} outages for {config.evn_area_name}.", flush=True)
         return outages
     except Exception as exc:
         print(f"Error fetching power outages: {exc}")
@@ -1217,9 +1234,6 @@ def check_telegram_commands(
         if len(parts) > 1:
             text += " " + " ".join(parts[1:])
 
-        if text.startswith("/"):
-            print(f"DEBUG: Received command '{text}' (original: '{original_text}') from chat_id '{chat_id}'", flush=True)
-
         if chat_id != str(config.telegram_chat_id):
             continue
 
@@ -1348,7 +1362,6 @@ def check_telegram_commands(
                 force_send=True,
             )
         elif text == "/showtodo":
-            print("DEBUG: Processing /showtodo command", flush=True)
             todos = read_todos(TODO_FILE_PATH)
             if todos:
                 # Use a code block to prevent Markdown parsing errors with special characters
@@ -1678,10 +1691,6 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
     if state_changed:
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
-    system_info = get_system_info_text(config, settings)
-    if system_info:
-        send_telegram_message(session, config, settings, system_info, state=state)
-
 
 def init_last_update_id(session: requests.Session, config: EnvConfig, settings: BotSettings) -> Optional[int]:
     try:
@@ -1788,6 +1797,8 @@ def main() -> None:
             force_send=True,
         )
 
+        start_system_monitor_worker(session, config, settings, state)
+
         last_run = time.time()
         while True:
             poll_timeout = min(TELEGRAM_POLL_TIMEOUT, max(1, state.interval_seconds // 2))
@@ -1834,11 +1845,17 @@ def main() -> None:
             # 8:00 AM Daily Lunar Alert
             if tz_now.hour == 8 and state.last_lunar_alert_date != tz_now.strftime("%Y-%m-%d"):
                 lunar_str = get_lunar_date_string(config.timezone)
+                openai_line = build_openai_status_line(state)
+                
+                alert_msg = f"📅 *Chào buổi sáng! Hôm nay là:* `{lunar_str}`"
+                if openai_line:
+                    alert_msg += f"\n{openai_line}"
+                
                 send_telegram_message(
                     session,
                     config,
                     settings,
-                    f"📅 *Chào buổi sáng! Hôm nay là:* `{lunar_str}`",
+                    alert_msg,
                     state=state,
                     force_send=True,
                 )

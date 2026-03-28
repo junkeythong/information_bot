@@ -149,6 +149,7 @@ class BotState:
     power_outages: List[dict] = field(default_factory=list)
     last_outage_check: float = 0.0
     last_lunar_alert_date: Optional[str] = None
+    pinned_daily_message_id: Optional[int] = None
 
 
 @dataclass
@@ -269,7 +270,7 @@ def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings
     month_start_epoch = epoch_utc(month_start_local)
     current_epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + 1
     end_time_utc = datetime.datetime.fromtimestamp(current_epoch - 1, tz=datetime.timezone.utc)
-    end_time_local = end_time_utc.astimezone(tzinfo)
+    end_time_local = end_time_utc.astimezone(tz)
 
     previous_month_end_local = month_start_local - datetime.timedelta(seconds=1)
     previous_month_start_local = previous_month_end_local.replace(
@@ -312,22 +313,25 @@ def refresh_openai_usage(session: requests.Session, config: EnvConfig, settings:
     if not config.openai_admin_key:
         return None
 
-    with state.openai_usage_lock:
-        try:
-            # Pass None or dummy for tzinfo as retrieve_openai_usage now uses global constant
-            usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, None)
-        except requests.RequestException as exc:
+    # Perform retrieval outside of the lock to avoid blocking other status checks
+    try:
+        tz = pytz.timezone(config.timezone)
+        usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, tz)
+        
+        with state.openai_usage_lock:
+            state.openai_usage = usage
+            state.openai_usage_error = None
+        return usage
+    except requests.RequestException as exc:
+        with state.openai_usage_lock:
             state.openai_usage = None
             state.openai_usage_error = f"OpenAI usage unavailable: {exc}"
-            return None
-        except Exception as exc:
+        return None
+    except Exception as exc:
+        with state.openai_usage_lock:
             state.openai_usage = None
             state.openai_usage_error = f"OpenAI usage error: {exc}"
-            return None
-
-        state.openai_usage = usage
-        state.openai_usage_error = None
-        return usage
+        return None
 
 
 def start_openai_usage_worker(
@@ -460,7 +464,7 @@ def build_openai_status_line(state: BotState) -> Optional[str]:
             f"(last month `${usage['last_month_cost']:,.4f}`)"
         )
     if error:
-        return f"• {error}"
+        return f"• `{error}`"
     return "• OpenAI usage: fetching..."
 
 
@@ -532,6 +536,7 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
     state.init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
     state.last_lunar_alert_date = state_data.get("last_lunar_alert_date", state.last_lunar_alert_date)
+    state.pinned_daily_message_id = state_data.get("pinned_daily_message_id", state.pinned_daily_message_id)
 
     night_window = state_data.get("night_mode_window")
     if isinstance(night_window, (list, tuple)) and len(night_window) == 2:
@@ -563,6 +568,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "power_outages": state.power_outages,
         "last_outage_check": state.last_outage_check,
         "last_lunar_alert_date": state.last_lunar_alert_date,
+        "pinned_daily_message_id": state.pinned_daily_message_id,
     }
     payload = {
         "state": state_data,
@@ -785,14 +791,14 @@ def remove_accents(input_str: str) -> str:
 
 def send_telegram_message(
     session: requests.Session,
-
     config: EnvConfig,
     settings: BotSettings,
     message: str,
     *,
+    chat_id: Optional[str] = None,
     state: Optional[BotState] = None,
     force_send: bool = False,
-) -> None:
+) -> Optional[dict]:
     tz = pytz.timezone(config.timezone)
 
     now_hour = datetime.datetime.now(tz).hour
@@ -807,12 +813,13 @@ def send_telegram_message(
 
     url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/sendMessage"
     payload = {
-        "chat_id": config.telegram_chat_id,
+        "chat_id": chat_id or config.telegram_chat_id,
         "text": message,
         "parse_mode": "Markdown",
     }
     try:
         if len(message) > TELEGRAM_MAX_MESSAGE:
+            first_res = None
             for idx in range(0, len(message), TELEGRAM_MAX_MESSAGE):
                 res = session.post(
                     url,
@@ -820,11 +827,42 @@ def send_telegram_message(
                     timeout=10,
                 )
                 res.raise_for_status()
+                if first_res is None:
+                    first_res = res.json()
+            return first_res
         else:
             res = session.post(url, data=payload, timeout=10)
             res.raise_for_status()
+            return res.json()
     except Exception as exc:
         print(f"Telegram send error: {exc}", flush=True)
+        return None
+
+
+def pin_telegram_message(session: requests.Session, config: EnvConfig, message_id: int) -> None:
+    url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/pinChatMessage"
+    payload = {
+        "chat_id": config.telegram_chat_id,
+        "message_id": message_id,
+        "disable_notification": True,
+    }
+    try:
+        res = session.post(url, data=payload, timeout=10)
+        res.raise_for_status()
+    except Exception as exc:
+        print(f"Telegram pin error: {exc}", flush=True)
+
+
+def unpin_telegram_message(session: requests.Session, config: EnvConfig, message_id: Optional[int] = None) -> None:
+    url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/unpinChatMessage"
+    payload = {"chat_id": config.telegram_chat_id}
+    if message_id:
+        payload["message_id"] = message_id
+    try:
+        res = session.post(url, data=payload, timeout=10)
+        res.raise_for_status()
+    except Exception as exc:
+        print(f"Telegram unpin error: {exc}", flush=True)
 
 
 def get_uptime(state: BotState) -> str:
@@ -1244,6 +1282,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 response,
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1277,6 +1316,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 compose_status_message(state, config, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1289,6 +1329,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 "⛔ Bot paused. No alerts will be sent until `/start` is issued.",
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1299,6 +1340,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 "▶️ Bot resumed. Alerts are active again.",
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1316,11 +1358,12 @@ def check_telegram_commands(
                     config,
                     settings,
                     f"📊 PnL: `{pnl}` USDT, `[{state.min_pnl},{state.max_pnl}]`",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
             else:
-                send_telegram_message(session, config, settings, f"`{pnl}`", state=state, force_send=True)
+                send_telegram_message(session, config, settings, f"`{pnl}`", chat_id=chat_id, state=state, force_send=True)
             if state_changed:
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
         elif text in {"/openai", "/openaiusage"}:
@@ -1330,6 +1373,7 @@ def check_telegram_commands(
                     config,
                     settings,
                     "❌ OpenAI admin key is not configured. Set OPENAI_ADMIN_KEY to enable this command.",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
@@ -1339,6 +1383,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 "Retrieving OpenAI usage, please wait ... it might take a while.",
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1358,6 +1403,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 message,
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1370,6 +1416,7 @@ def check_telegram_commands(
                     config,
                     settings,
                     f"*📋 TODO list:*\n```text\n{todos}\n```",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
@@ -1379,6 +1426,7 @@ def check_telegram_commands(
                     config,
                     settings,
                     "📭 The TODO list is currently empty.",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
@@ -1427,6 +1475,7 @@ def check_telegram_commands(
                     config,
                     settings,
                     "\n".join(msg_lines),
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
@@ -1436,11 +1485,12 @@ def check_telegram_commands(
                     config,
                     settings,
                     f"💰 Spot USDT Balance: {spot_balance:,.2f} USDT",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
             else:
-                send_telegram_message(session, config, settings, spot_balance, state=state, force_send=True)
+                send_telegram_message(session, config, settings, spot_balance, chat_id=chat_id, state=state, force_send=True)
         elif text == "/outage":
             outages = get_power_outages(session, config)
             if outages:
@@ -1454,7 +1504,7 @@ def check_telegram_commands(
             else:
                 message = f"✅ No power outages scheduled for the next 7 days in {config.evn_area_name}."
 
-            send_telegram_message(session, config, settings, message, state=state, force_send=True)
+            send_telegram_message(session, config, settings, message, chat_id=chat_id, state=state, force_send=True)
         elif text == "/sysinfo":
             sysinfo = get_system_info_text(config, settings, show_all=True)
             send_telegram_message(
@@ -1462,6 +1512,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 sysinfo or "No system information available.",
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1503,6 +1554,7 @@ def check_telegram_commands(
                 config,
                 settings,
                 message,
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1516,6 +1568,7 @@ def check_telegram_commands(
                         config,
                         settings,
                         f"📝 Added todo:\n`{todo_item}`",
+                        chat_id=chat_id,
                         state=state,
                         force_send=True,
                     )
@@ -1525,6 +1578,7 @@ def check_telegram_commands(
                         config,
                         settings,
                         f"⚠️ Could not save todo: `{exc}`",
+                        chat_id=chat_id,
                         state=state,
                         force_send=True,
                     )
@@ -1534,6 +1588,7 @@ def check_telegram_commands(
                     config,
                     settings,
                     "⚠️ Empty todo. Usage: `/todo <description>`",
+                    chat_id=chat_id,
                     state=state,
                     force_send=True,
                 )
@@ -1558,6 +1613,7 @@ def check_telegram_commands(
                 "• `/start` / `/stop` – Resume or pause alerts\n"
                 "• `/todo <text>` – Add an item to TODO\n"
                 "• `/spot reset` – reset clear min/max history",
+                chat_id=chat_id,
                 state=state,
                 force_send=True,
             )
@@ -1798,6 +1854,7 @@ def main() -> None:
         )
 
         start_system_monitor_worker(session, config, settings, state)
+        start_openai_usage_worker(openai_session or session, config, settings, state, OPENAI_REFRESH_SECONDS)
 
         last_run = time.time()
         while True:
@@ -1845,13 +1902,33 @@ def main() -> None:
             # 8:00 AM Daily Lunar Alert
             if tz_now.hour == 8 and state.last_lunar_alert_date != tz_now.strftime("%Y-%m-%d"):
                 lunar_str = get_lunar_date_string(config.timezone)
-                openai_line = build_openai_status_line(state)
-                
-                alert_msg = f"📅 *Chào buổi sáng! Hôm nay là:* `{lunar_str}`"
-                if openai_line:
-                    alert_msg += f"\n{openai_line}"
-                
-                send_telegram_message(
+                spot_balance = get_spot_balance(session, config)
+
+                msg_lines = [
+                    f"📅 *Hôm nay là:* `{lunar_str}`",
+                    "",
+                    "💰 *Spot Balance:*",
+                ]
+
+                if isinstance(spot_balance, dict):
+                    total = spot_balance.get("total", 0.0)
+                    pnl_perc_line = ""
+                    if state.init_capital:
+                        pnl_perc = (total - state.init_capital) / state.init_capital * 100
+                        pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+
+                    msg_lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
+                    msg_lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
+                else:
+                    msg_lines.append(f"• {spot_balance}")
+
+                alert_msg = "\n".join(msg_lines)
+
+                # Unpin the previous daily status if exists
+                if state.pinned_daily_message_id:
+                    unpin_telegram_message(session, config, state.pinned_daily_message_id)
+
+                resp = send_telegram_message(
                     session,
                     config,
                     settings,
@@ -1859,6 +1936,13 @@ def main() -> None:
                     state=state,
                     force_send=True,
                 )
+
+                if resp and "result" in resp:
+                    msg_id = resp["result"].get("message_id")
+                    if msg_id:
+                        pin_telegram_message(session, config, msg_id)
+                        state.pinned_daily_message_id = msg_id
+
                 state.last_lunar_alert_date = tz_now.strftime("%Y-%m-%d")
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
 

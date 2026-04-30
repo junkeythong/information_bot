@@ -719,9 +719,30 @@ def get_air_quality(session: requests.Session, config: EnvConfig) -> Union[dict,
 
 def get_top_processes(n: int = 5) -> Tuple[str, str]:
     processes = []
-    for proc in psutil.process_iter(attrs=["pid", "name", "cpu_percent", "memory_percent"]):
+    sampled_procs = []
+
+    # Prime psutil's per-process CPU counters before reading them.
+    # The first cpu_percent() call returns a baseline, so without this
+    # the alert message can miss the actual process that spiked.
+    for proc in psutil.process_iter(attrs=["pid", "name"]):
         try:
-            processes.append(proc.info)
+            proc.cpu_percent(None)
+            sampled_procs.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    time.sleep(0.2)
+
+    for proc in sampled_procs:
+        try:
+            processes.append(
+                {
+                    "pid": proc.info["pid"],
+                    "name": proc.info.get("name") or "unknown",
+                    "cpu_percent": proc.cpu_percent(None),
+                    "memory_percent": proc.memory_percent(),
+                }
+            )
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 

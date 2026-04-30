@@ -1,4 +1,4 @@
 requests
 psutil
 pytz
-lunar-vn>=1.1.1
+lunar-vn>=1.2.1

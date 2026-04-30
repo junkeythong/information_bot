@@ -13,6 +13,7 @@ import re
 import html
 import sys
 import unicodedata
+from importlib import metadata
 
 import psutil
 import pytz
@@ -199,6 +200,15 @@ def format_config_value(value: object) -> str:
     if isinstance(value, (list, tuple)) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
         return f"{value[0]} -> {value[1]}"
     return str(value)
+
+
+def log_lunar_vn_version() -> None:
+    try:
+        version = metadata.version("lunar-vn")
+    except metadata.PackageNotFoundError:
+        version = "not installed"
+    print(f"lunar-vn version: {version}", flush=True)
+    return version
 
 def create_retry_session() -> requests.Session:
     session = requests.Session()
@@ -1783,6 +1793,7 @@ def init_last_update_id(session: requests.Session, config: EnvConfig, settings: 
 
 
 def main() -> None:
+    lunar_vn_version = log_lunar_vn_version()
     try:
         config = load_env_config()
     except RuntimeError as exc:
@@ -1846,6 +1857,14 @@ def main() -> None:
             config,
             settings,
             "🤖 Binance PnL bot is starting...",
+            state=state,
+            force_send=True,
+        )
+        send_telegram_message(
+            session,
+            config,
+            settings,
+            f"📦 lunar-vn version: `{lunar_vn_version}`",
             state=state,
             force_send=True,
         )

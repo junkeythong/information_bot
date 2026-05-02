@@ -23,8 +23,6 @@ from urllib3.util.retry import Retry
 from lunar_vn import solar_to_lunar, can_chi, holidays
 
 
-OPENAI_COSTS_URL = "https://api.openai.com/v1/organization/costs"
-OPENAI_USAGE_URL = "https://api.openai.com/v1/organization/usage/completions"
 IQAIR_API_URL = "https://api.airvisual.com/v2/nearest_city"
 ASCII_STARTUP_BANNER = (
     "```\n"
@@ -33,10 +31,8 @@ ASCII_STARTUP_BANNER = (
     "```"
 )
 STATE_FILE_PATH = "pnl-bot-state.json"
-TODO_FILE_PATH = "pnl-bot-todo-db.txt"
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_MAX_MESSAGE = 4096
-OPENAI_REFRESH_SECONDS = 300
 EVN_SPC_OUTAGE_URL = "https://www.cskh.evnspc.vn/TraCuu/GetThongTinLichNgungGiamCungCapDien"
 # Cache outages for some time to avoid frequent calls
 POWER_OUTAGE_REFRESH_SECONDS = 3600
@@ -115,7 +111,6 @@ class EnvConfig:
     api_secret: str
     telegram_token: str
     telegram_chat_id: str
-    openai_admin_key: Optional[str] = None
     iqair_api_key: Optional[str] = None
     iqair_latitude: float = 10.8231
     iqair_longitude: float = 106.6297
@@ -144,9 +139,6 @@ class BotState:
     init_capital: Optional[float] = None
     night_mode_active: bool = False
     start_time: float = field(default_factory=time.time)
-    openai_usage: Optional[dict] = None
-    openai_usage_error: Optional[str] = None
-    openai_usage_lock: Lock = field(default_factory=Lock, repr=False)
     power_outages: List[dict] = field(default_factory=list)
     last_outage_check: float = 0.0
     last_lunar_alert_date: Optional[str] = None
@@ -222,146 +214,6 @@ def create_retry_session() -> requests.Session:
     return session
 
 
-def epoch_utc(dt_obj: datetime.datetime) -> int:
-    return int(dt_obj.astimezone(datetime.timezone.utc).timestamp())
-
-
-def sum_openai_costs(session: requests.Session, key: str, start_epoch: int, end_epoch: int) -> float:
-    headers = {"Authorization": f"Bearer {key}"}
-    params = {"start_time": start_epoch, "end_time": end_epoch, "limit": 31}
-    response = session.get(OPENAI_COSTS_URL, params=params, headers=headers, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-    total = 0.0
-    for bucket in payload.get("data", []):
-        rows = bucket.get("results") or bucket.get("result") or []
-        for row in rows:
-            amount = (row.get("amount") or {}).get("value", 0)
-            try:
-                total += float(amount or 0)
-            except (TypeError, ValueError):
-                continue
-    return total
-
-
-def sum_openai_usage(session: requests.Session, key: str, start_epoch: int, end_epoch: int) -> Tuple[int, int]:
-    headers = {"Authorization": f"Bearer {key}"}
-    params = {
-        "start_time": start_epoch,
-        "end_time": end_epoch,
-        "bucket_width": "1d",
-        "limit": 31,
-    }
-    response = session.get(OPENAI_USAGE_URL, params=params, headers=headers, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    total_requests = 0
-    total_tokens = 0
-    for bucket in payload.get("data", []):
-        rows = bucket.get("results") or bucket.get("result") or []
-        for row in rows:
-            requests_count = int(row.get("num_model_requests", 0) or 0)
-            input_tokens = int(row.get("input_tokens", 0) or 0)
-            output_tokens = int(row.get("output_tokens", 0) or 0)
-            total_requests += requests_count
-            total_tokens += input_tokens + output_tokens
-
-            input_details = row.get("input_tokens_details") or {}
-            cached_tokens = int(input_details.get("cached_tokens", 0) or 0)
-            total_tokens += cached_tokens
-    return total_requests, total_tokens
-
-
-def retrieve_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, key: str, tzinfo: datetime.tzinfo):
-    tz = pytz.timezone(config.timezone)
-    now_local = datetime.datetime.now(tz)
-    month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_start_epoch = epoch_utc(month_start_local)
-    current_epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + 1
-    end_time_utc = datetime.datetime.fromtimestamp(current_epoch - 1, tz=datetime.timezone.utc)
-    end_time_local = end_time_utc.astimezone(tz)
-
-    previous_month_end_local = month_start_local - datetime.timedelta(seconds=1)
-    previous_month_start_local = previous_month_end_local.replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    )
-    previous_month_end_epoch = epoch_utc(
-        previous_month_end_local.replace(hour=23, minute=59, second=59, microsecond=0)
-    ) + 1
-    previous_month_start_epoch = epoch_utc(previous_month_start_local)
-
-    mtd_cost = sum_openai_costs(session, key, month_start_epoch, current_epoch)
-    last_month_cost = sum_openai_costs(session, key, previous_month_start_epoch, previous_month_end_epoch)
-    mtd_requests, mtd_tokens = sum_openai_usage(session, key, month_start_epoch, current_epoch)
-
-    return {
-        "month_start_local": month_start_local,
-        "previous_month_start_local": previous_month_start_local,
-        "previous_month_end_local": previous_month_end_local,
-        "mtd_cost": mtd_cost,
-        "last_month_cost": last_month_cost,
-        "mtd_requests": mtd_requests,
-        "mtd_tokens": mtd_tokens,
-        "refreshed_at": now_local,
-        "end_time_local": end_time_local,
-        "end_time_utc": end_time_utc,
-    }
-
-
-def format_openai_usage_report(usage: dict) -> str:
-    mtd_cost_str = f"${usage['mtd_cost']:,.4f}"
-    last_month_cost_str = f"${usage['last_month_cost']:,.4f}"
-    return (
-        "*📊 OpenAI Costs*\n"
-        f"• MTD Cost: `{mtd_cost_str}`\n"
-        f"• Last Month: `{last_month_cost_str}`"
-    )
-
-
-def refresh_openai_usage(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> Optional[dict]:
-    if not config.openai_admin_key:
-        return None
-
-    # Perform retrieval outside of the lock to avoid blocking other status checks
-    try:
-        tz = pytz.timezone(config.timezone)
-        usage = retrieve_openai_usage(session, config, settings, config.openai_admin_key, tz)
-        
-        with state.openai_usage_lock:
-            state.openai_usage = usage
-            state.openai_usage_error = None
-        return usage
-    except requests.RequestException as exc:
-        with state.openai_usage_lock:
-            state.openai_usage = None
-            state.openai_usage_error = f"OpenAI usage unavailable: {exc}"
-        return None
-    except Exception as exc:
-        with state.openai_usage_lock:
-            state.openai_usage = None
-            state.openai_usage_error = f"OpenAI usage error: {exc}"
-        return None
-
-
-def start_openai_usage_worker(
-    session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState, interval_seconds: int
-) -> Optional[threading.Thread]:
-    if not config.openai_admin_key:
-        return None
-
-    def worker():
-        sleep_interval = max(60, interval_seconds)
-        while True:
-            refresh_openai_usage(session, config, settings, state)
-            sleep_interval = max(60, OPENAI_REFRESH_SECONDS)
-            time.sleep(sleep_interval)
-
-    thread = threading.Thread(target=worker, name="openai-usage-worker", daemon=True)
-    thread.start()
-    return thread
-
-
 def start_system_monitor_worker(
     session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState
 ) -> threading.Thread:
@@ -389,47 +241,51 @@ def start_system_monitor_worker(
     return thread
 
 
+def get_pnl_icon(val: float) -> str:
+    if val > 0: return "🟢"
+    if val < 0: return "🔴"
+    return "⚪"
+
+
 def compose_status_message(
     state: BotState,
     config: EnvConfig,
     status_info: Optional[str],
     current_pnl: Union[float, str],
     *,
-    openai_line: Optional[str] = None,
     spot_balance: Optional[Union[float, str]] = None,
 ) -> str:
     lines = [
         "🧭 Status:",
         f"• Running: `{state.is_running}`",
         f"• Interval: `{state.interval_seconds / 60:.1f}m`",
-        f"• Night mode: `{state.night_mode_enabled}` (active: `{state.night_mode_active}`)",
-        f"• Alert limit: `{state.pnl_alert_low} USDT ~ {state.pnl_alert_high} USDT`",
+        f"• Night mode: `{state.night_mode_enabled}`",
         f"• Uptime: `{get_uptime(state)}`",
         f"• Lunar: `{get_lunar_date_string(config.timezone)}`",
     ]
-    todo_count = get_todo_count()
-    if todo_count > 0:
-        lines.append(f"• TODO Left: `{todo_count}`")
-    if state.init_capital:
-        lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
-
-    if openai_line:
-        lines.append(openai_line)
 
     lines.extend([
         "",
-        "💰 *Spot Balance:*",
+        "💰 *Spot:*",
     ])
+    if state.init_capital:
+        lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
     if spot_balance is not None:
         if isinstance(spot_balance, dict):
             total = spot_balance.get("total", 0.0)
             pnl_perc_line = ""
             if state.init_capital:
                 pnl_perc = (total - state.init_capital) / state.init_capital * 100
-                pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+                icon = get_pnl_icon(pnl_perc)
+                pnl_perc_line = f" {icon} ({pnl_perc:+.2f}%)"
+                max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
+                min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
+                max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT` ({max_perc:+.2f}%), Min: `{state.min_spot_balance:,.2f} USDT` ({min_perc:+.2f}%)"
+            else:
+                max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`"
 
             lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-            lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
+            lines.append(max_min_line)
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
                 price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
@@ -442,40 +298,31 @@ def compose_status_message(
             if state.init_capital:
                 pnl_perc = (total - state.init_capital) / state.init_capital * 100
                 pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+                max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
+                min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
+                max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT` ({max_perc:+.2f}%), Min: `{state.min_spot_balance:,.2f} USDT` ({min_perc:+.2f}%)"
+            else:
+                max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`"
 
             lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-            lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
+            lines.append(max_min_line)
         else:
             lines.append(f"• {spot_balance}")
 
     lines.extend([
         "",
-        "📊 *Futures PnL:*",
+        "💰 *Futures:*",
     ])
     if isinstance(current_pnl, (int, float)):
-        lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT`")
+        icon = get_pnl_icon(current_pnl)
+        lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT` {icon}")
     else:
         lines.append(f"• Current PnL: `{current_pnl}`")
     lines.extend([
-        f"• Max PnL: `{state.max_pnl} USDT`, Min: `{state.min_pnl} USDT`",
+        f"• Max PnL: `{state.max_pnl:,.2f} USDT`, Min: `{state.min_pnl:,.2f} USDT`",
     ])
 
     return "\n".join(lines)
-
-
-def build_openai_status_line(state: BotState) -> Optional[str]:
-    with state.openai_usage_lock:
-        usage = state.openai_usage
-        error = state.openai_usage_error
-
-    if usage:
-        return (
-            f"• OpenAI cost (MTD): `${usage['mtd_cost']:,.4f}` "
-            f"(last month `${usage['last_month_cost']:,.4f}`)"
-        )
-    if error:
-        return f"• `{error}`"
-    return "• OpenAI usage: fetching..."
 
 
 def load_env_config() -> EnvConfig:
@@ -491,7 +338,6 @@ def load_env_config() -> EnvConfig:
         api_secret=require_env("API_SECRET"),
         telegram_token=require_env("TELEGRAM_TOKEN"),
         telegram_chat_id=require_env("TELEGRAM_CHAT_ID"),
-        openai_admin_key=os.getenv("OPENAI_ADMIN_KEY"),
         iqair_api_key=os.getenv("IQAIR_API_KEY"),
         iqair_latitude=env_float("IQAIR_LATITUDE", 10.8231),
         iqair_longitude=env_float("IQAIR_LONGITUDE", 106.6297),
@@ -1016,35 +862,6 @@ def refresh_power_outages(session: requests.Session, config: EnvConfig, state: B
     return new_outages
 
 
-def get_todo_count() -> int:
-    if not os.path.exists(TODO_FILE_PATH):
-        return 0
-    try:
-        with open(TODO_FILE_PATH, "r", encoding="utf-8") as handle:
-            return sum(1 for line in handle if line.strip())
-    except Exception:
-        return 0
-
-
-def ensure_todo_file_exists(todo_file: str) -> None:
-    if not os.path.exists(todo_file):
-        with open(todo_file, "w", encoding="utf-8") as handle:
-            handle.write("")
-
-
-def append_todo(todo_file: str, todo_item: str) -> None:
-    with open(todo_file, "a", encoding="utf-8") as handle:
-        handle.write(f"- {todo_item}\n")
-
-
-def read_todos(todo_file: str) -> Optional[str]:
-    if not os.path.exists(todo_file):
-        return None
-    with open(todo_file, "r", encoding="utf-8") as handle:
-        lines = [line for line in handle.readlines() if line.strip()]
-    return "".join(lines) if lines else None
-
-
 def _parse_pnl_low(raw: str, state: BotState, _: BotSettings) -> int:
     value = parse_int_value(raw)
     if value >= state.pnl_alert_high:
@@ -1253,7 +1070,6 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
 
 def check_telegram_commands(
     session: requests.Session,
-    openai_session: Optional[requests.Session],
     config: EnvConfig,
     settings: BotSettings,
     state: BotState,
@@ -1340,13 +1156,11 @@ def check_telegram_commands(
                     state.max_spot_balance = max(state.max_spot_balance, total_s)
                     state.min_spot_balance = min(state.min_spot_balance, total_s)
                     state_changed = state_changed or prev_max_s != state.max_spot_balance or prev_min_s != state.min_spot_balance
-            # OpenAI retrieval is now only done via /openai command to save resources
-            openai_line = None
             send_telegram_message(
                 session,
                 config,
                 settings,
-                compose_status_message(state, config, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
+                compose_status_message(state, config, None, pnl, spot_balance=spot_balance),
                 chat_id=chat_id,
                 state=state,
                 force_send=True,
@@ -1375,20 +1189,30 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
-        elif text == "/pnl":
+        elif text == "/futures" or text.startswith("/futures "):
+            parts = text.split()
+            reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
+
             pnl = get_futures_pnl(session, config)
             state_changed = False
             if isinstance(pnl, (int, float)):
+                if reset_mode:
+                    state.max_pnl = pnl
+                    state.min_pnl = pnl
+                    state_changed = True
+                
                 prev_max = state.max_pnl
                 prev_min = state.min_pnl
                 state.max_pnl = max(state.max_pnl, pnl)
                 state.min_pnl = min(state.min_pnl, pnl)
-                state_changed = prev_max != state.max_pnl or prev_min != state.min_pnl
+                if prev_max != state.max_pnl or prev_min != state.min_pnl:
+                    state_changed = True
+                icon = get_pnl_icon(pnl)
                 send_telegram_message(
                     session,
                     config,
                     settings,
-                    f"📊 PnL: `{pnl}` USDT, `[{state.min_pnl},{state.max_pnl}]`",
+                    f"💰 *Futures:* `{pnl:,.2f} USDT` {icon}\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`",
                     chat_id=chat_id,
                     state=state,
                     force_send=True,
@@ -1397,70 +1221,6 @@ def check_telegram_commands(
                 send_telegram_message(session, config, settings, f"`{pnl}`", chat_id=chat_id, state=state, force_send=True)
             if state_changed:
                 persist_runtime_state(STATE_FILE_PATH, state, settings)
-        elif text in {"/openai", "/openaiusage"}:
-            if not config.openai_admin_key:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    "❌ OpenAI admin key is not configured. Set OPENAI_ADMIN_KEY to enable this command.",
-                    chat_id=chat_id,
-                    state=state,
-                    force_send=True,
-                )
-                continue
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                "Retrieving OpenAI usage, please wait ... it might take a while.",
-                chat_id=chat_id,
-                state=state,
-                force_send=True,
-            )
-            usage_session = openai_session or session
-            refresh_openai_usage(usage_session, config, settings, state)
-            with state.openai_usage_lock:
-                usage = state.openai_usage
-                error = state.openai_usage_error
-            if usage:
-                message = format_openai_usage_report(usage)
-            elif error:
-                message = f"❌ {error}"
-            else:
-                message = "ℹ️ OpenAI usage update is still in progress. Try again in a moment."
-            send_telegram_message(
-                session,
-                config,
-                settings,
-                message,
-                chat_id=chat_id,
-                state=state,
-                force_send=True,
-            )
-        elif text == "/showtodo":
-            todos = read_todos(TODO_FILE_PATH)
-            if todos:
-                # Use a code block to prevent Markdown parsing errors with special characters
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    f"*📋 TODO list:*\n```text\n{todos}\n```",
-                    chat_id=chat_id,
-                    state=state,
-                    force_send=True,
-                )
-            else:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    "📭 The TODO list is currently empty.",
-                    chat_id=chat_id,
-                    state=state,
-                    force_send=True,
-                )
         elif text == "/spot" or text.startswith("/spot "):
             # specific logic to allow "/spot reset"
             parts = text.split()
@@ -1489,10 +1249,11 @@ def check_telegram_commands(
                 pnl_perc_info = ""
                 if state.init_capital:
                     pnl_perc = (total - state.init_capital) / state.init_capital * 100
-                    pnl_perc_info = f" ({pnl_perc:+.2f}%)"
+                    icon = get_pnl_icon(pnl_perc)
+                    pnl_perc_info = f" {icon} ({pnl_perc:+.2f}%)"
 
                 msg_lines = [
-                    f"💰 *Spot Balance:* `{total:,.2f} USDT`{pnl_perc_info}",
+                    f"💰 *Spot:* `{total:,.2f} USDT`{pnl_perc_info}",
                     f"📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`"
                 ]
                 if breakdown:
@@ -1589,61 +1350,25 @@ def check_telegram_commands(
                 state=state,
                 force_send=True,
             )
-        elif text == "/todo" or text.startswith("/todo "):
-            todo_item = text[len("/todo") :].strip()
-            if todo_item:
-                try:
-                    append_todo(TODO_FILE_PATH, todo_item)
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        f"📝 Added todo:\n`{todo_item}`",
-                        chat_id=chat_id,
-                        state=state,
-                        force_send=True,
-                    )
-                except Exception as exc:
-                    send_telegram_message(
-                        session,
-                        config,
-                        settings,
-                        f"⚠️ Could not save todo: `{exc}`",
-                        chat_id=chat_id,
-                        state=state,
-                        force_send=True,
-                    )
-            else:
-                send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    "⚠️ Empty todo. Usage: `/todo <description>`",
-                    chat_id=chat_id,
-                    state=state,
-                    force_send=True,
-                )
         elif text == "/help":
             send_telegram_message(
                 session,
                 config,
                 settings,
                 "*ℹ️ Info commands:*\n"
-                "• `/status` – Comprehensive snapshot (PnL, Spot, Config)\n"
-                "• `/pnl` – Quick unrealized PnL check\n"
+                "• `/status` – Comprehensive snapshot (Futures, Spot, Config)\n"
+                "• `/futures` – Quick unrealized PnL check\n"
                 "• `/spot` – Quick spot balance check\n"
                 "• `/aqi` – Air quality index (IQAir)\n"
                 "• `/sysinfo` – System information\n"
-                "• `/openai` – Usage and cost stats\n"
-                "• `/showtodo` – View the TODO list\n"
                 "• `/outage` – View power outage schedule\n"
                 "• `/help` – This reference\n"
                 "\n*🛠 Configuration:*\n"
                 "• `/config show` – View all runtime parameters\n"
                 "• `/config set <key> <value>` – Update a parameter\n"
                 "• `/start` / `/stop` – Resume or pause alerts\n"
-                "• `/todo <text>` – Add an item to TODO\n"
-                "• `/spot reset` – reset clear min/max history",
+                "• `/spot reset` – reset clear min/max history for spot\n"
+                "• `/futures reset` – reset clear min/max history for futures",
                 chat_id=chat_id,
                 state=state,
                 force_send=True,
@@ -1710,9 +1435,10 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         pnl_perc_info = ""
         if state.init_capital:
             pnl_perc = (total_spot - state.init_capital) / state.init_capital * 100
-            pnl_perc_info = f" ({pnl_perc:+.2f}%)"
+            icon = get_pnl_icon(pnl_perc)
+            pnl_perc_info = f" {icon} ({pnl_perc:+.2f}%)"
 
-        spot_msg = f"💰 *Spot:* `{total_spot:,.2f} USDT`{pnl_perc_info}, `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`\n"
+        spot_msg = f"💰 *Spot:* `{total_spot:,.2f} USDT`{pnl_perc_info}\n📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`\n"
         if isinstance(spot_balance, dict):
             breakdown = spot_balance.get("breakdown", [])
             for item in breakdown[:5]:  # Show top 5 assets
@@ -1726,11 +1452,12 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
     futures_msg = ""
     if pnl != 0.0:
         if pnl <= state.pnl_alert_low:
-            futures_msg = f"Heavy loss: 🔻 `{pnl}` USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+            futures_msg = f"Heavy loss: 🔻 `{pnl:,.2f} USDT`\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
         elif pnl >= state.pnl_alert_high:
-            futures_msg = f"High profit: 🟢 `{pnl}` USDT, `[ {state.min_pnl}, {state.max_pnl} ]`"
+            futures_msg = f"High profit: 🟢 `{pnl:,.2f} USDT`\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
         else:
-            futures_msg = f"📊 Futures PnL: `{pnl}` USDT, `[{state.min_pnl},{state.max_pnl}]`"
+            icon = get_pnl_icon(pnl)
+            futures_msg = f"💰 *Futures:* `{pnl:,.2f} USDT` {icon}\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
 
     # Format AQI message
     aqi_msg = ""
@@ -1807,7 +1534,6 @@ def main() -> None:
         return
 
     session = create_retry_session()
-    openai_session = create_retry_session() if config.openai_admin_key else None
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
         night_mode_enabled=settings.default_night_mode_enabled,
@@ -1821,7 +1547,6 @@ def main() -> None:
     if persisted:
         apply_persisted_configuration(persisted, state, settings)
 
-    ensure_todo_file_exists(TODO_FILE_PATH)
     atexit.register(lambda: notify_exit(session, config, settings))
 
     try:
@@ -1882,26 +1607,23 @@ def main() -> None:
 
 
 
-        # OpenAI retrieval is done on demand
-        openai_line = None
+        # Status retrieval is done on demand
         send_telegram_message(
             session,
             config,
             settings,
-            compose_status_message(state, config, None, pnl, openai_line=openai_line, spot_balance=spot_balance),
+            compose_status_message(state, config, None, pnl, spot_balance=spot_balance),
             state=state,
             force_send=True,
         )
 
         start_system_monitor_worker(session, config, settings, state)
-        start_openai_usage_worker(openai_session or session, config, settings, state, OPENAI_REFRESH_SECONDS)
 
         last_run = time.time()
         while True:
             poll_timeout = min(TELEGRAM_POLL_TIMEOUT, max(1, state.interval_seconds // 2))
             state.last_update_id = check_telegram_commands(
                 session,
-                openai_session,
                 config,
                 settings,
                 state,
@@ -1947,7 +1669,7 @@ def main() -> None:
                 msg_lines = [
                     f"📅 *Hôm nay là:* `{lunar_str}`",
                     "",
-                    "💰 *Spot Balance:*",
+                    "💰 *Spot:*",
                 ]
 
                 if isinstance(spot_balance, dict):
@@ -1955,10 +1677,16 @@ def main() -> None:
                     pnl_perc_line = ""
                     if state.init_capital:
                         pnl_perc = (total - state.init_capital) / state.init_capital * 100
-                        pnl_perc_line = f" ({pnl_perc:+.2f}%)"
+                        icon = get_pnl_icon(pnl_perc)
+                        pnl_perc_line = f" {icon} ({pnl_perc:+.2f}%)"
+                        max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
+                        min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
+                        max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT` ({max_perc:+.2f}%), Min: `{state.min_spot_balance:,.2f} USDT` ({min_perc:+.2f}%)"
+                    else:
+                        max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`"
 
                     msg_lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-                    msg_lines.append(f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`")
+                    msg_lines.append(max_min_line)
                 else:
                     msg_lines.append(f"• {spot_balance}")
 

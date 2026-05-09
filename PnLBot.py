@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,12 +32,15 @@ ASCII_STARTUP_BANNER = (
     "```"
 )
 STATE_FILE_PATH = "pnl-bot-state.json"
+STATE_BACKUP_SUFFIX = ".bak"
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_MAX_MESSAGE = 4096
 EVN_SPC_OUTAGE_URL = "https://www.cskh.evnspc.vn/TraCuu/GetThongTinLichNgungGiamCungCapDien"
 # Cache outages for some time to avoid frequent calls
 POWER_OUTAGE_REFRESH_SECONDS = 3600
 TELEGRAM_POLL_TIMEOUT = 30
+INTERVAL_MIN_SECONDS = 10
+INTERVAL_MAX_SECONDS = 86400
 
 
 def env_str(name: str, default: str) -> str:
@@ -71,6 +75,23 @@ def env_float(name: str, default: float) -> float:
         raise RuntimeError(f"Environment variable {name} must be a float") from exc
 
 
+def validate_interval_seconds(value: int, source: str) -> int:
+    if not (INTERVAL_MIN_SECONDS <= value <= INTERVAL_MAX_SECONDS):
+        raise RuntimeError(
+            f"{source} must be between {INTERVAL_MIN_SECONDS} and {INTERVAL_MAX_SECONDS} seconds"
+        )
+    return value
+
+
+def validate_pnl_thresholds(low: int, high: int) -> None:
+    if low >= high:
+        raise RuntimeError("PNL alert low threshold must be lower than high threshold")
+
+
+def is_valid_night_mode_window(start_hour: int, end_hour: int) -> bool:
+    return 0 <= start_hour <= 23 and 0 <= end_hour <= 24 and start_hour != end_hour
+
+
 @dataclass
 class BotSettings:
     default_interval_seconds: int
@@ -89,6 +110,8 @@ def load_bot_settings() -> BotSettings:
     night_mode_end = env_int("PNL_BOT_NIGHT_MODE_END_HOUR", 5)
     default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
     init_capital = env_float("PNL_BOT_INIT_CAPITAL", 0.0)
+    validate_interval_seconds(default_interval, "PNL_BOT_DEFAULT_INTERVAL_SECONDS")
+    validate_pnl_thresholds(default_low, default_high)
     if not (0 <= night_mode_start <= 23 and 0 <= night_mode_end <= 24):
         raise RuntimeError("Night mode hours must be within 0-24 range")
     if night_mode_start == night_mode_end:
@@ -137,6 +160,7 @@ class BotState:
     max_spot_balance: float = 0.0
     min_spot_balance: float = 0.0
     init_capital: Optional[float] = None
+    outage_street_filter: Optional[str] = None
     night_mode_active: bool = False
     start_time: float = field(default_factory=time.time)
     power_outages: List[dict] = field(default_factory=list)
@@ -160,6 +184,15 @@ def parse_bool_value(raw: str) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError("Value must be true/false or on/off")
+
+
+def parse_outage_filter_value(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if not value or value.lower() in {"none", "null", "clear", "-"}:
+        return None
+    return value
 
 
 def parse_float_value(raw: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
@@ -352,14 +385,35 @@ def load_env_config() -> EnvConfig:
     return config
 
 
+def state_backup_path(path: str) -> str:
+    return f"{path}{STATE_BACKUP_SUFFIX}"
+
+
+def _load_state_file(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def load_persisted_state(path: str) -> Optional[dict]:
+    backup_path = state_backup_path(path)
     if not os.path.exists(path):
+        if os.path.exists(backup_path):
+            try:
+                print(f"State file {path} not found; loading backup {backup_path}")
+                return _load_state_file(backup_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"Could not load backup state: {exc}")
         return None
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+        return _load_state_file(path)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Could not load persisted state: {exc}")
+        if os.path.exists(backup_path):
+            try:
+                print(f"Loading backup state from {backup_path}")
+                return _load_state_file(backup_path)
+            except (OSError, json.JSONDecodeError) as backup_exc:
+                print(f"Could not load backup state: {backup_exc}")
         return None
 
 
@@ -381,16 +435,37 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         except (TypeError, ValueError):
             return default
 
-    state.interval_seconds = _safe_int(state_data.get("interval_seconds"), state.interval_seconds)
-    state.night_mode_enabled = bool(state_data.get("night_mode_enabled", state.night_mode_enabled))
-    state.is_running = bool(state_data.get("is_running", state.is_running))
-    state.pnl_alert_low = _safe_int(state_data.get("pnl_alert_low"), state.pnl_alert_low)
-    state.pnl_alert_high = _safe_int(state_data.get("pnl_alert_high"), state.pnl_alert_high)
+    def _safe_bool(value, default):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        try:
+            return parse_bool_value(str(value))
+        except ValueError:
+            return default
+
+    interval_seconds = _safe_int(state_data.get("interval_seconds"), state.interval_seconds)
+    if INTERVAL_MIN_SECONDS <= interval_seconds <= INTERVAL_MAX_SECONDS:
+        state.interval_seconds = interval_seconds
+
+    state.night_mode_enabled = _safe_bool(state_data.get("night_mode_enabled"), state.night_mode_enabled)
+    state.is_running = _safe_bool(state_data.get("is_running"), state.is_running)
+
+    pnl_alert_low = _safe_int(state_data.get("pnl_alert_low"), state.pnl_alert_low)
+    pnl_alert_high = _safe_int(state_data.get("pnl_alert_high"), state.pnl_alert_high)
+    if pnl_alert_low < pnl_alert_high:
+        state.pnl_alert_low = pnl_alert_low
+        state.pnl_alert_high = pnl_alert_high
+
     state.max_pnl = _safe_float(state_data.get("max_pnl"), state.max_pnl)
     state.min_pnl = _safe_float(state_data.get("min_pnl"), state.min_pnl)
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
-    state.init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
+    init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
+    state.init_capital = init_capital if init_capital and init_capital > 0 else None
+    if "outage_filter" in state_data:
+        state.outage_street_filter = parse_outage_filter_value(state_data.get("outage_filter"))
     state.last_lunar_alert_date = state_data.get("last_lunar_alert_date", state.last_lunar_alert_date)
     state.pinned_daily_message_id = state_data.get("pinned_daily_message_id", state.pinned_daily_message_id)
 
@@ -399,8 +474,9 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         try:
             start_hour = int(night_window[0])
             end_hour = int(night_window[1])
-            state.night_mode_window = (start_hour, end_hour)
-            settings.night_mode_window = state.night_mode_window
+            if is_valid_night_mode_window(start_hour, end_hour):
+                state.night_mode_window = (start_hour, end_hour)
+                settings.night_mode_window = state.night_mode_window
         except (TypeError, ValueError):
             pass
 
@@ -420,6 +496,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "max_spot_balance": state.max_spot_balance,
         "min_spot_balance": state.min_spot_balance,
         "init_capital": state.init_capital,
+        "outage_filter": state.outage_street_filter,
         "night_mode_window": list(state.night_mode_window),
         "power_outages": state.power_outages,
         "last_outage_check": state.last_outage_check,
@@ -431,9 +508,12 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
     }
 
     tmp_path = f"{path}.tmp"
+    backup_path = state_backup_path(path)
     try:
         with open(tmp_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
+        if os.path.exists(path):
+            shutil.copy2(path, backup_path)
         os.replace(tmp_path, path)
     except OSError as exc:
         print(f"Could not persist state: {exc}")
@@ -666,6 +746,40 @@ def remove_accents(input_str: str) -> str:
     return s
 
 
+def split_telegram_message(message: str, max_length: int = TELEGRAM_MAX_MESSAGE) -> List[str]:
+    if len(message) <= max_length:
+        return [message]
+
+    chunks = []
+    current = ""
+    for line in message.splitlines(keepends=True):
+        if len(line) > max_length:
+            if current:
+                chunks.append(current)
+                current = ""
+            for idx in range(0, len(line), max_length):
+                chunks.append(line[idx : idx + max_length])
+            continue
+
+        if current and len(current) + len(line) > max_length:
+            chunks.append(current)
+            current = line
+        else:
+            current += line
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def telegram_message_payload(base_payload: dict, text: str) -> dict:
+    payload = {**base_payload, "text": text}
+    if text.count("`") % 2 == 1:
+        payload.pop("parse_mode", None)
+    return payload
+
+
 def send_telegram_message(
     session: requests.Session,
     config: EnvConfig,
@@ -697,10 +811,10 @@ def send_telegram_message(
     try:
         if len(message) > TELEGRAM_MAX_MESSAGE:
             first_res = None
-            for idx in range(0, len(message), TELEGRAM_MAX_MESSAGE):
+            for chunk in split_telegram_message(message, TELEGRAM_MAX_MESSAGE):
                 res = session.post(
                     url,
-                    data={**payload, "text": message[idx : idx + TELEGRAM_MAX_MESSAGE]},
+                    data=telegram_message_payload(payload, chunk),
                     timeout=10,
                 )
                 res.raise_for_status()
@@ -708,7 +822,7 @@ def send_telegram_message(
                     first_res = res.json()
             return first_res
         else:
-            res = session.post(url, data=payload, timeout=10)
+            res = session.post(url, data=telegram_message_payload(payload, message), timeout=10)
             res.raise_for_status()
             return res.json()
     except Exception as exc:
@@ -1000,10 +1114,10 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         applier=lambda value, state, settings: setattr(state, "min_spot_balance", value),
     ),
     "outage_filter": ConfigDefinition(
-        description="Power outage street filter (env only)",
-        parser=lambda raw, state, settings: raw,
-        getter=lambda state, settings: "N/A",  # Overridden in listing
-        applier=lambda value, state, settings: None,
+        description="Power outage street filter (use none to clear)",
+        parser=lambda raw, state, settings: parse_outage_filter_value(raw),
+        getter=lambda state, settings: state.outage_street_filter or "None",
+        applier=lambda value, state, settings: setattr(state, "outage_street_filter", value),
     ),
 }
 
@@ -1054,6 +1168,8 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
         try:
             parsed_value = definition.parser(value_text, state, settings)
             result = definition.applier(parsed_value, state, settings)
+            if key == "outage_filter":
+                config.outage_street_filter = state.outage_street_filter
             persist_runtime_state(STATE_FILE_PATH, state, settings)
             if isinstance(result, str) and result:
                 extra = f"\n{result}"
@@ -1541,11 +1657,13 @@ def main() -> None:
         pnl_alert_high=settings.default_pnl_alert_high,
         night_mode_window=settings.night_mode_window,
         init_capital=settings.init_capital,
+        outage_street_filter=config.outage_street_filter,
     )
 
     persisted = load_persisted_state(STATE_FILE_PATH)
     if persisted:
         apply_persisted_configuration(persisted, state, settings)
+        config.outage_street_filter = state.outage_street_filter
 
     atexit.register(lambda: notify_exit(session, config, settings))
 

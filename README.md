@@ -22,7 +22,7 @@ set at runtime are persisted to the state file so they survive restarts.
 - `IQAIR_API_KEY` – IQAir API key for air quality monitoring (optional, get free key at [IQAir Dashboard](https://www.iqair.com/dashboard/api))
 - `IQAIR_LATITUDE` – Latitude for air quality monitoring (default: 10.8231 - Ho Chi Minh City)
 - `IQAIR_LONGITUDE` – Longitude for air quality monitoring (default: 106.6297 - Ho Chi Minh City)
-- `PNL_BOT_DEFAULT_INTERVAL_SECONDS` (900) – default alert interval in seconds (max 86400/24h)
+- `PNL_BOT_DEFAULT_INTERVAL_SECONDS` (3600) – default alert interval in seconds (max 86400/24h)
 - `PNL_BOT_DEFAULT_PNL_ALERT_LOW` (-20) – lower unrealized PnL alert threshold
 - `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` (20) – upper unrealized PnL alert threshold
 - `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` (true) – enable quiet hours on start
@@ -68,6 +68,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 
 - `/config show` – View all runtime parameters
 - `/config set <key> <value>` – Update a parameter (interval, limits, bot state, or historical min/max bounds)
+- `/config set outage_filter <street>` – Update the outage street filter (`none` to clear)
 - `/start`, `/stop` – Resume or pause automatic monitoring alerts
 - `/spot reset` – reset clear min/max history for spot
 - `/futures reset` – reset clear min/max history for futures

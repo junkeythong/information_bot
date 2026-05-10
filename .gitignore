@@ -1,5 +1,5 @@
 venv
-pnlbot.log
+pnlbot.log*
 pnl-bot-state.json
 pnl-bot-state.json.bak
 __pycache__

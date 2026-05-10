@@ -44,6 +44,32 @@ class BotSettingsValidationTests(unittest.TestCase):
                 PnLBot.load_bot_settings()
 
 
+class RequestsSessionTests(unittest.TestCase):
+    def test_retry_session_falls_back_to_system_ca_when_certifi_path_is_missing(self):
+        with patch.object(PnLBot.requests.certs, "where", return_value="/missing/cacert.pem"):
+            with patch.object(PnLBot.os.path, "exists", side_effect=lambda path: path == "/system/ca.pem"):
+                with patch.object(PnLBot, "SYSTEM_CA_BUNDLE_PATHS", ("/system/ca.pem",)):
+                    session = PnLBot.create_retry_session()
+
+        self.assertEqual(session.verify, "/system/ca.pem")
+
+
+class LogRotationTests(unittest.TestCase):
+    def test_rotating_log_stream_keeps_current_log_and_one_backup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "pnlbot.log"
+            stream = PnLBot.RotatingLogStream(str(log_path), max_bytes=10)
+            try:
+                stream.write("123456789")
+                stream.write("abc")
+            finally:
+                stream.close()
+
+            files = sorted(path.name for path in Path(tmpdir).iterdir())
+
+        self.assertEqual(files, ["pnlbot.log", "pnlbot.log.1"])
+
+
 class PersistedStateValidationTests(unittest.TestCase):
     def test_ignores_invalid_persisted_bounds_and_parses_boolean_strings(self):
         settings, state = make_settings_and_state()

@@ -33,6 +33,8 @@ ASCII_STARTUP_BANNER = (
 )
 STATE_FILE_PATH = "pnl-bot-state.json"
 STATE_BACKUP_SUFFIX = ".bak"
+LOG_FILE_PATH = "pnlbot.log"
+LOG_MAX_BYTES = 1_000_000
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_MAX_MESSAGE = 4096
 EVN_SPC_OUTAGE_URL = "https://www.cskh.evnspc.vn/TraCuu/GetThongTinLichNgungGiamCungCapDien"
@@ -41,6 +43,59 @@ POWER_OUTAGE_REFRESH_SECONDS = 3600
 TELEGRAM_POLL_TIMEOUT = 30
 INTERVAL_MIN_SECONDS = 10
 INTERVAL_MAX_SECONDS = 86400
+SYSTEM_CA_BUNDLE_PATHS = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+)
+
+
+class RotatingLogStream:
+    encoding = "utf-8"
+
+    def __init__(self, path: str, max_bytes: int) -> None:
+        self.path = path
+        self.max_bytes = max_bytes
+        self.backup_path = f"{path}.1"
+        self._lock = threading.RLock()
+        self._stream = open(path, "a", encoding=self.encoding, buffering=1)
+        self._rotate_if_needed(0)
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        encoded_length = len(text.encode(self.encoding, errors="replace"))
+        with self._lock:
+            self._rotate_if_needed(encoded_length)
+            return self._stream.write(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            self._stream.flush()
+
+    def close(self) -> None:
+        with self._lock:
+            self._stream.close()
+
+    def isatty(self) -> bool:
+        return False
+
+    def _rotate_if_needed(self, incoming_bytes: int) -> None:
+        self._stream.seek(0, os.SEEK_END)
+        if self._stream.tell() + incoming_bytes <= self.max_bytes:
+            return
+        self._stream.close()
+        if os.path.exists(self.backup_path):
+            os.remove(self.backup_path)
+        if os.path.exists(self.path):
+            os.replace(self.path, self.backup_path)
+        self._stream = open(self.path, "a", encoding=self.encoding, buffering=1)
+
+
+def configure_runtime_logging(path: str = LOG_FILE_PATH, max_bytes: int = LOG_MAX_BYTES) -> None:
+    stream = RotatingLogStream(path, max_bytes)
+    sys.stdout = stream
+    sys.stderr = stream
 
 
 def env_str(name: str, default: str) -> str:
@@ -162,6 +217,7 @@ class BotState:
     init_capital: Optional[float] = None
     outage_street_filter: Optional[str] = None
     night_mode_active: bool = False
+    telegram_command_polling_enabled: bool = True
     start_time: float = field(default_factory=time.time)
     power_outages: List[dict] = field(default_factory=list)
     last_outage_check: float = 0.0
@@ -235,8 +291,20 @@ def log_lunar_vn_version() -> None:
     print(f"lunar-vn version: {version}", flush=True)
     return version
 
+
+def resolve_requests_verify_path() -> Union[bool, str]:
+    if os.path.exists(requests.certs.where()):
+        return True
+    for path in SYSTEM_CA_BUNDLE_PATHS:
+        if os.path.exists(path):
+            print(f"certifi CA bundle not found; using system CA bundle: {path}", flush=True)
+            return path
+    return True
+
+
 def create_retry_session() -> requests.Session:
     session = requests.Session()
+    session.verify = resolve_requests_verify_path()
     retries = Retry(
         total=5,
         backoff_factor=1,
@@ -830,6 +898,15 @@ def send_telegram_message(
         return None
 
 
+def is_telegram_polling_conflict(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 409
+
+
+def sanitize_telegram_error(exc: Exception, config: EnvConfig) -> str:
+    return str(exc).replace(f"/bot{config.telegram_token}/", "/bot<redacted>/")
+
+
 def pin_telegram_message(session: requests.Session, config: EnvConfig, message_id: int) -> None:
     url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/pinChatMessage"
     payload = {
@@ -1202,7 +1279,15 @@ def check_telegram_commands(
         response.raise_for_status()
         updates = response.json()
     except Exception as exc:
-        print(f"Telegram command error: {exc}")
+        if is_telegram_polling_conflict(exc):
+            state.telegram_command_polling_enabled = False
+            print(
+                "Telegram command polling disabled: another getUpdates consumer is already active "
+                f"({sanitize_telegram_error(exc, config)})",
+                flush=True,
+            )
+        else:
+            print(f"Telegram command error: {sanitize_telegram_error(exc, config)}", flush=True)
         return last_update_id
 
     results = updates.get("result") or []
@@ -1622,7 +1707,12 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
 
-def init_last_update_id(session: requests.Session, config: EnvConfig, settings: BotSettings) -> Optional[int]:
+def init_last_update_id(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: Optional[BotState] = None,
+) -> Optional[int]:
     try:
         url = f"{TELEGRAM_API_URL}/bot{config.telegram_token}/getUpdates"
         response = session.get(url, params={"timeout": 1}, timeout=6)
@@ -1631,11 +1721,20 @@ def init_last_update_id(session: requests.Session, config: EnvConfig, settings: 
         if updates:
             return max(update["update_id"] for update in updates if "update_id" in update)
     except Exception as exc:
-        print(f"Startup could not fetch update_id: {exc}")
+        if is_telegram_polling_conflict(exc) and state is not None:
+            state.telegram_command_polling_enabled = False
+            print(
+                "Startup disabled Telegram command polling: another getUpdates consumer is already active "
+                f"({sanitize_telegram_error(exc, config)})",
+                flush=True,
+            )
+        else:
+            print(f"Startup could not fetch update_id: {sanitize_telegram_error(exc, config)}", flush=True)
     return None
 
 
 def main() -> None:
+    configure_runtime_logging()
     lunar_vn_version = log_lunar_vn_version()
     try:
         config = load_env_config()
@@ -1668,7 +1767,7 @@ def main() -> None:
     atexit.register(lambda: notify_exit(session, config, settings))
 
     try:
-        state.last_update_id = init_last_update_id(session, config, settings)
+        state.last_update_id = init_last_update_id(session, config, settings, state)
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
             state.max_pnl = pnl if pnl > 0 else state.max_pnl
@@ -1740,14 +1839,17 @@ def main() -> None:
         last_run = time.time()
         while True:
             poll_timeout = min(TELEGRAM_POLL_TIMEOUT, max(1, state.interval_seconds // 2))
-            state.last_update_id = check_telegram_commands(
-                session,
-                config,
-                settings,
-                state,
-                state.last_update_id,
-                poll_timeout,
-            )
+            if state.telegram_command_polling_enabled:
+                state.last_update_id = check_telegram_commands(
+                    session,
+                    config,
+                    settings,
+                    state,
+                    state.last_update_id,
+                    poll_timeout,
+                )
+            else:
+                time.sleep(poll_timeout)
 
             tz_now = datetime.datetime.now(pytz.timezone(config.timezone))
             start_hour, end_hour = state.night_mode_window

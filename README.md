@@ -42,7 +42,10 @@ Set the variables in your shell or an `.env` file before launching the bot.
 ## Runtime Behavior
 
 - Uses a retry-enabled `requests.Session` for Binance and Telegram APIs
+- Writes runtime output to `pnlbot.log` with one rotated backup (`pnlbot.log.1`), capped at about 1 MB per file
+- Falls back to the system CA bundle if the Python `certifi` CA file path is missing
 - Long-polls Telegram for commands and updates `update_id` tracking automatically
+- If Telegram reports another active `getUpdates` consumer, command polling is disabled and scheduled monitoring continues without log spam
 - Persists editable runtime settings (interval, thresholds, run state, PnL and Spot bounds) to the JSON state file whenever they change
 - Hides Spot and Futures sections in the notification loop if their respective balance or PnL is zero
 - Night mode can span midnight (e.g., 22 to 6) and sends start/end notices even during quiet hours

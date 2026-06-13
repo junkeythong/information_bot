@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from pnlbot import config_commands, http as http_client, monitoring
+from pnlbot import config_commands, http as http_client, monitoring, portfolio
 from pnlbot.config import load_bot_settings
 from pnlbot.logging import RotatingLogStream
 from pnlbot.models import BotSettings, BotState, EnvConfig
@@ -231,8 +231,8 @@ class PnlRangeTrackingTests(unittest.TestCase):
         state.min_pnl = 100.0
         state.last_outage_check = monitoring.time.time()
 
-        with patch.object(monitoring, "get_futures_pnl", return_value=50.0):
-            with patch.object(monitoring, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+        with patch.object(portfolio, "get_futures_pnl", return_value=50.0):
+            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
                 with patch.object(monitoring, "send_telegram_message"):
                     with patch.object(monitoring, "persist_runtime_state"):
                         monitoring.monitor_loop(None, config, settings, state)

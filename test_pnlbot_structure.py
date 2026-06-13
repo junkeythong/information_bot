@@ -19,6 +19,7 @@ class PackageStructureTests(unittest.TestCase):
             "pnlbot.monitoring",
             "pnlbot.outages",
             "pnlbot.persistence",
+            "pnlbot.portfolio",
             "pnlbot.runtime",
             "pnlbot.state",
             "pnlbot.system_info",

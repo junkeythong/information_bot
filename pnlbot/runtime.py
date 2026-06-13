@@ -16,7 +16,7 @@ from pnlbot.constants import (
 )
 from pnlbot.http import create_retry_session
 from pnlbot.logging import configure_runtime_logging
-from pnlbot.market_data import get_futures_pnl, get_spot_balance
+from pnlbot.market_data import get_spot_balance
 from pnlbot.messages import compose_status_message, get_pnl_icon
 from pnlbot.models import BotSettings, BotState, EnvConfig
 from pnlbot.monitoring import (
@@ -24,12 +24,12 @@ from pnlbot.monitoring import (
     notify_exit,
     start_system_monitor_worker,
 )
+from pnlbot import portfolio
 from pnlbot.persistence import (
     apply_persisted_configuration,
     load_persisted_state,
     persist_runtime_state,
 )
-from pnlbot.state import update_pnl_range, update_spot_balance_range
 from pnlbot.telegram import (
     is_telegram_polling_conflict,
     pin_telegram_message,
@@ -101,10 +101,9 @@ def main() -> None:
 
     try:
         state.last_update_id = init_last_update_id(session, config, settings, state)
-        pnl = get_futures_pnl(session, config)
-        if isinstance(pnl, (int, float)):
-            update_pnl_range(state, pnl)
-        else:
+        snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
+        pnl = snapshot.pnl
+        if isinstance(pnl, str):
             send_telegram_message(
                 session,
                 config,
@@ -143,12 +142,7 @@ def main() -> None:
             force_send=True,
         )
 
-        # Fetch spot balance at startup
-        spot_balance = get_spot_balance(session, config)
-        if isinstance(spot_balance, dict):
-            total_s = spot_balance.get("total", 0.0)
-            if update_spot_balance_range(state, total_s):
-                persist_runtime_state(STATE_FILE_PATH, state, settings)
+        spot_balance = snapshot.spot_balance
 
         # Status retrieval is done on demand
         send_telegram_message(

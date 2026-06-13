@@ -1,13 +1,13 @@
 import requests
 
+from . import portfolio
 from .config_commands import handle_config_command
 from .constants import STATE_FILE_PATH
-from .market_data import get_air_quality, get_futures_pnl, get_spot_balance
-from .messages import compose_status_message, get_pnl_icon
+from .market_data import get_air_quality
+from .messages import compose_status_message
 from .models import BotSettings, BotState, EnvConfig
 from .outages import get_power_outages
 from .persistence import persist_runtime_state
-from .state import update_pnl_range, update_spot_balance_range
 from .system_info import get_system_info_text
 from .telegram import send_telegram_message
 
@@ -40,26 +40,18 @@ def handle_status_command(
     chat_id: str,
     _: str,
 ) -> None:
-    pnl = get_futures_pnl(session, config)
-    spot_balance = get_spot_balance(session, config)
-    state_changed = False
-    if isinstance(pnl, (int, float)):
-        state_changed = update_pnl_range(state, pnl) or state_changed
-
-    if isinstance(spot_balance, dict):
-        total_s = spot_balance.get("total", 0.0)
-        state_changed = update_spot_balance_range(state, total_s) or state_changed
+    snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
 
     send_telegram_message(
         session,
         config,
         settings,
-        compose_status_message(state, config, None, pnl, spot_balance=spot_balance),
+        compose_status_message(state, config, None, snapshot.pnl, spot_balance=snapshot.spot_balance),
         chat_id=chat_id,
         state=state,
         force_send=True,
     )
-    if state_changed:
+    if snapshot.state_changed:
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
 
@@ -114,28 +106,16 @@ def handle_futures_command(
     parts = text.split()
     reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
 
-    pnl = get_futures_pnl(session, config)
-    state_changed = False
-    if isinstance(pnl, (int, float)):
-        if reset_mode:
-            state.max_pnl = pnl
-            state.min_pnl = pnl
-            state_changed = True
-
-        if update_pnl_range(state, pnl):
-            state_changed = True
-        icon = get_pnl_icon(pnl)
-        send_telegram_message(
-            session,
-            config,
-            settings,
-            f"💰 *Futures:* `{pnl:,.2f} USDT` {icon}\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`",
-            chat_id=chat_id,
-            state=state,
-            force_send=True,
-        )
-    else:
-        send_telegram_message(session, config, settings, f"`{pnl}`", chat_id=chat_id, state=state, force_send=True)
+    pnl, state_changed = portfolio.refresh_futures_pnl(session, config, state, reset_range=reset_mode)
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        portfolio.format_futures_pnl_summary(state, pnl),
+        chat_id=chat_id,
+        state=state,
+        force_send=True,
+    )
     if state_changed:
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
@@ -151,56 +131,19 @@ def handle_spot_command(
     parts = text.split()
     reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
 
-    spot_balance = get_spot_balance(session, config)
-    if isinstance(spot_balance, dict):
-        total = spot_balance.get("total", 0.0)
-        if total > 0:
-            # If reset is requested, snap min/max to current total
-            if reset_mode:
-                state.max_spot_balance = total
-                state.min_spot_balance = total
+    spot_balance, state_changed = portfolio.refresh_spot_balance(session, config, state, reset_range=reset_mode)
+    if state_changed:
+        persist_runtime_state(STATE_FILE_PATH, state, settings)
 
-            if reset_mode or update_spot_balance_range(state, total):
-                persist_runtime_state(STATE_FILE_PATH, state, settings)
-
-        breakdown = spot_balance.get("breakdown", [])
-        pnl_perc_info = ""
-        if state.init_capital:
-            pnl_perc = (total - state.init_capital) / state.init_capital * 100
-            icon = get_pnl_icon(pnl_perc)
-            pnl_perc_info = f" {icon} ({pnl_perc:+.2f}%)"
-
-        msg_lines = [
-            f"💰 *Spot:* `{total:,.2f} USDT`{pnl_perc_info}",
-            f"📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`"
-        ]
-        if breakdown:
-            msg_lines.append("\n*Asset Breakdown:*")
-            for item in breakdown:
-                price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
-                msg_lines.append(f"• `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}")
-
-        send_telegram_message(
-            session,
-            config,
-            settings,
-            "\n".join(msg_lines),
-            chat_id=chat_id,
-            state=state,
-            force_send=True,
-        )
-    elif isinstance(spot_balance, (int, float)):
-        send_telegram_message(
-            session,
-            config,
-            settings,
-            f"💰 Spot USDT Balance: {spot_balance:,.2f} USDT",
-            chat_id=chat_id,
-            state=state,
-            force_send=True,
-        )
-    else:
-        send_telegram_message(session, config, settings, spot_balance, chat_id=chat_id, state=state, force_send=True)
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        portfolio.format_spot_balance_summary(state, spot_balance, include_asset_heading=True),
+        chat_id=chat_id,
+        state=state,
+        force_send=True,
+    )
 
 
 def handle_outage_command(

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import requests
-from pnlbot import command_handlers, commands, telegram
+from pnlbot import command_handlers, commands, portfolio, telegram
 from pnlbot.models import BotSettings, BotState, EnvConfig
 
 
@@ -145,8 +145,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
             min_pnl=100.0,
         )
 
-        with patch.object(command_handlers, "get_futures_pnl", return_value=50.0):
-            with patch.object(command_handlers, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+        with patch.object(portfolio, "get_futures_pnl", return_value=50.0):
+            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
                 with patch.object(command_handlers, "persist_runtime_state") as persist_state:
                     update_id = commands.check_telegram_commands(
                         session,

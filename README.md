@@ -83,6 +83,57 @@ Runtime changes are persisted to the local state file.
 | `/stop` | Pause scheduled alerts |
 | `/help` | Show available commands |
 
+## Example Outputs
+
+### `/status`
+
+```text
+🧭 Status:
+• Running: `True`
+• Interval: `15.0m`
+• Night mode: `True`
+• Uptime: `24h,12m,5s`
+• Lunar: `Mùng 3 Tháng 2 Năm Bính Ngọ`
+
+💰 *Spot:*
+• Init Capital: `5,000.00 USDT`
+• Total: `5,420.50 USDT` 🟢 (+8.41%)
+• Max: `5,600.00 USDT` (+12.00%), Min: `5,200.00 USDT` (+4.00%)
+  ▫️ `BTC`: `3,200.00 USDT` @ 98,500.2500
+  ▫️ `ETH`: `1,500.00 USDT` @ 2,650.1000
+
+💰 *Futures:*
+• Current PnL: `125.40 USDT` 🟢
+• Max PnL: `250.00 USDT`, Min: `-40.00 USDT`
+```
+
+### `/spot`
+
+```text
+💰 *Spot:* `5,420.50 USDT` 🟢 (+8.41%)
+📊 *Range:* `[5,200.00, 5,600.00]`
+
+*Asset Breakdown:*
+• `BTC`: `3,200.00 USDT` @ 98,500.2500
+• `ETH`: `1,500.00 USDT` @ 2,650.1000
+```
+
+### `/futures`
+
+```text
+💰 *Futures:* `125.40 USDT` 🟢
+📊 *Range:* `[-40.00, 250.00]`
+```
+
+### `/aqi`
+
+```text
+🟡 *Air Quality - Ho Chi Minh City*
+• AQI (US): `85` - `Moderate`
+• Temperature: `28°C`
+• Humidity: `75%`
+```
+
 ## Run As A Service
 
 Use `template/pnlbot.service.template` as a starting point for systemd.
@@ -93,13 +144,13 @@ Update the paths in the template, then enable the service.
 Run tests:
 
 ```bash
-python3 -m unittest discover -s . -p "test_*.py"
+python3 -m unittest discover -s tests -t . -p "test_*.py"
 ```
 
 Check Python syntax:
 
 ```bash
-python3 -m py_compile main.py pnlbot/*.py test_*.py
+python3 -m py_compile main.py pnlbot/*.py tests/*.py
 ```
 
 ## Runtime Files

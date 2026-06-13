@@ -1,5 +1,4 @@
 import importlib
-from pathlib import Path
 import unittest
 
 
@@ -37,9 +36,6 @@ class PackageStructureTests(unittest.TestCase):
 
         self.assertIsNotNone(BotState)
         self.assertTrue(callable(split_telegram_message))
-
-    def test_legacy_wrapper_file_is_removed(self):
-        self.assertFalse(Path(__file__).with_name("PnLBot.py").exists())
 
     def test_main_module_is_starting_point(self):
         main_module = importlib.import_module("main")

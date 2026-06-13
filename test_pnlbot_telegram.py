@@ -41,6 +41,28 @@ class FakeConflictPollingSession:
         return FakeConflictResponse()
 
 
+class FakeUpdatesResponse:
+    def __init__(self, updates):
+        self.updates = updates
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"ok": True, "result": self.updates}
+
+
+class FakeCommandSession(FakeTelegramSession):
+    def __init__(self, updates):
+        super().__init__()
+        self.updates = updates
+        self.gets = []
+
+    def get(self, url, params, timeout):
+        self.gets.append({"url": url, "params": params, "timeout": timeout})
+        return FakeUpdatesResponse(self.updates)
+
+
 class TelegramMessageSplittingTests(unittest.TestCase):
     def test_long_markdown_message_splits_on_lines_before_raw_chunks(self):
         session = FakeTelegramSession()
@@ -100,6 +122,44 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertEqual(update_id, 123)
         self.assertFalse(state.telegram_command_polling_enabled)
         self.assertEqual(len(session.gets), 1)
+
+    def test_status_command_tracks_lower_positive_futures_pnl_after_reset(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/status", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
+        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
+        state = PnLBot.BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            max_pnl=100.0,
+            min_pnl=100.0,
+        )
+
+        with patch.object(PnLBot, "get_futures_pnl", return_value=50.0):
+            with patch.object(PnLBot, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                with patch.object(PnLBot, "persist_runtime_state") as persist_state:
+                    update_id = PnLBot.check_telegram_commands(
+                        session,
+                        config,
+                        settings,
+                        state,
+                        state.last_update_id,
+                        poll_timeout=30,
+                    )
+
+        self.assertEqual(update_id, 124)
+        self.assertEqual(state.max_pnl, 100.0)
+        self.assertEqual(state.min_pnl, 50.0)
+        persist_state.assert_called_once()
 
 
 if __name__ == "__main__":

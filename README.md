@@ -53,7 +53,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - When `IQAIR_API_KEY` is configured, air quality index (AQI) is included in monitoring loop notifications
 - **Power Outages**: Can fetch schedules for the configured area from EVN SPC via the `/outage` command. Supports filtering by street using `PNL_BOT_OUTAGE_STREET_FILTER`.
 - Status message is organized into **Status** (Uptime, Lunar Date, Init Capital, Config), **Spot** (including ranges, token prices, and PnL %), and **Futures** sections
-- Sends a simplified daily status report (**Lunar date** and **Spot PnL**) at 8:00 AM, which is automatically **pinned**.
+- Sends a simplified daily status report (**Lunar date** and **Spot PnL**) at 8:00 AM while the bot is running, which is automatically **pinned**.
 
 ## Telegram Commands
 
@@ -72,7 +72,7 @@ Set the variables in your shell or an `.env` file before launching the bot.
 - `/config show` – View all runtime parameters
 - `/config set <key> <value>` – Update a parameter (interval, limits, bot state, or historical min/max bounds)
 - `/config set outage_filter <street>` – Update the outage street filter (`none` to clear)
-- `/start`, `/stop` – Resume or pause automatic monitoring alerts
+- `/start`, `/stop` – Resume or pause automatic monitoring alerts and the daily pinned status report
 - `/spot reset` – reset clear min/max history for spot
 - `/futures reset` – reset clear min/max history for futures
 

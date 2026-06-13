@@ -348,6 +348,14 @@ def get_pnl_icon(val: float) -> str:
     return "⚪"
 
 
+def update_pnl_range(state: BotState, pnl: float) -> bool:
+    prev_max = state.max_pnl
+    prev_min = state.min_pnl
+    state.max_pnl = max(state.max_pnl, pnl)
+    state.min_pnl = min(state.min_pnl, pnl)
+    return state.max_pnl != prev_max or state.min_pnl != prev_min
+
+
 def compose_status_message(
     state: BotState,
     config: EnvConfig,
@@ -972,6 +980,14 @@ def get_lunar_date_string(timezone_name: str) -> str:
         return f"Error: {exc}"
 
 
+def should_send_daily_status(state: BotState, now: datetime.datetime) -> bool:
+    return (
+        state.is_running
+        and now.hour == 8
+        and state.last_lunar_alert_date != now.strftime("%Y-%m-%d")
+    )
+
+
 def get_power_outages(session: requests.Session, config: EnvConfig) -> List[dict]:
     """Fetches upcoming power outages from EVN SPC API, based on configured Ma Don Vi."""
     tz = pytz.timezone(config.timezone)
@@ -1038,6 +1054,7 @@ def get_power_outages(session: requests.Session, config: EnvConfig) -> List[dict
 def refresh_power_outages(session: requests.Session, config: EnvConfig, state: BotState) -> List[dict]:
     """Updates the state with new power outages and returns only the NEW ones."""
     current_outages = get_power_outages(session, config)
+    state.last_outage_check = time.time()
     if not current_outages:
         return []
 
@@ -1048,7 +1065,6 @@ def refresh_power_outages(session: requests.Session, config: EnvConfig, state: B
     # Since we don't have perfect date parsing here, we'll just keep the latest results
     # and filter by ID to find truly new ones.
     state.power_outages = current_outages
-    state.last_outage_check = time.time()
 
     return new_outages
 
@@ -1339,13 +1355,7 @@ def check_telegram_commands(
             spot_balance = get_spot_balance(session, config)
             state_changed = False
             if isinstance(pnl, (int, float)):
-                prev_max_p = state.max_pnl
-                prev_min_p = state.min_pnl
-                if pnl >= 0:
-                    state.max_pnl = max(state.max_pnl, pnl)
-                if pnl <= 0:
-                    state.min_pnl = min(state.min_pnl, pnl)
-                state_changed = state_changed or prev_max_p != state.max_pnl or prev_min_p != state.min_pnl
+                state_changed = update_pnl_range(state, pnl) or state_changed
 
             if isinstance(spot_balance, dict):
                 total_s = spot_balance.get("total", 0.0)
@@ -1402,11 +1412,7 @@ def check_telegram_commands(
                     state.min_pnl = pnl
                     state_changed = True
                 
-                prev_max = state.max_pnl
-                prev_min = state.min_pnl
-                state.max_pnl = max(state.max_pnl, pnl)
-                state.min_pnl = min(state.min_pnl, pnl)
-                if prev_max != state.max_pnl or prev_min != state.min_pnl:
+                if update_pnl_range(state, pnl):
                     state_changed = True
                 icon = get_pnl_icon(pnl)
                 send_telegram_message(
@@ -1601,13 +1607,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
 
     # Update Futures Stats
     if isinstance(pnl, (int, float)):
-        prev_max_p = state.max_pnl
-        prev_min_p = state.min_pnl
-        if pnl >= 0:
-            state.max_pnl = max(state.max_pnl, pnl)
-        if pnl <= 0:
-            state.min_pnl = min(state.min_pnl, pnl)
-        if state.max_pnl != prev_max_p or state.min_pnl != prev_min_p:
+        if update_pnl_range(state, pnl):
             state_changed = True
 
     # Update Spot Stats
@@ -1770,8 +1770,7 @@ def main() -> None:
         state.last_update_id = init_last_update_id(session, config, settings, state)
         pnl = get_futures_pnl(session, config)
         if isinstance(pnl, (int, float)):
-            state.max_pnl = pnl if pnl > 0 else state.max_pnl
-            state.min_pnl = pnl if pnl < 0 else state.min_pnl
+            update_pnl_range(state, pnl)
         else:
             send_telegram_message(
                 session,
@@ -1882,7 +1881,7 @@ def main() -> None:
                 )
 
             # 8:00 AM Daily Lunar Alert
-            if tz_now.hour == 8 and state.last_lunar_alert_date != tz_now.strftime("%Y-%m-%d"):
+            if should_send_daily_status(state, tz_now):
                 lunar_str = get_lunar_date_string(config.timezone)
                 spot_balance = get_spot_balance(session, config)
 

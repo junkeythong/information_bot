@@ -199,5 +199,46 @@ class OutageFilterConfigTests(unittest.TestCase):
         self.assertEqual(state.outage_street_filter, "Main Street")
 
 
+class PowerOutageRefreshTests(unittest.TestCase):
+    def test_empty_outage_refresh_updates_last_check_time(self):
+        settings, state = make_settings_and_state()
+        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
+        state.last_outage_check = 10.0
+
+        with patch.object(PnLBot, "get_power_outages", return_value=[]):
+            with patch.object(PnLBot.time, "time", return_value=1234.0):
+                new_outages = PnLBot.refresh_power_outages(None, config, state)
+
+        self.assertEqual(new_outages, [])
+        self.assertEqual(state.last_outage_check, 1234.0)
+
+
+class PnlRangeTrackingTests(unittest.TestCase):
+    def test_monitor_loop_tracks_lower_positive_futures_pnl_after_reset(self):
+        settings, state = make_settings_and_state()
+        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
+        state.max_pnl = 100.0
+        state.min_pnl = 100.0
+        state.last_outage_check = PnLBot.time.time()
+
+        with patch.object(PnLBot, "get_futures_pnl", return_value=50.0):
+            with patch.object(PnLBot, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                with patch.object(PnLBot, "send_telegram_message"):
+                    with patch.object(PnLBot, "persist_runtime_state"):
+                        PnLBot.monitor_loop(None, config, settings, state)
+
+        self.assertEqual(state.max_pnl, 100.0)
+        self.assertEqual(state.min_pnl, 50.0)
+
+
+class DailyStatusSchedulingTests(unittest.TestCase):
+    def test_daily_status_is_not_due_when_bot_is_paused(self):
+        settings, state = make_settings_and_state()
+        state.is_running = False
+        now = PnLBot.datetime.datetime(2026, 6, 13, 8, 0, 0)
+
+        self.assertFalse(PnLBot.should_send_daily_status(state, now))
+
+
 if __name__ == "__main__":
     unittest.main()

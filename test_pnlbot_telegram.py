@@ -1,8 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-import PnLBot
 import requests
+from pnlbot import command_handlers, commands, telegram
+from pnlbot.models import BotSettings, BotState, EnvConfig
 
 
 class FakeTelegramResponse:
@@ -66,12 +67,12 @@ class FakeCommandSession(FakeTelegramSession):
 class TelegramMessageSplittingTests(unittest.TestCase):
     def test_long_markdown_message_splits_on_lines_before_raw_chunks(self):
         session = FakeTelegramSession()
-        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
-        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
         message = f"`{'a' * 30}`\n`{'b' * 30}`"
 
-        with patch.object(PnLBot, "TELEGRAM_MAX_MESSAGE", 50):
-            PnLBot.send_telegram_message(session, config, settings, message, force_send=True)
+        with patch.object(telegram, "TELEGRAM_MAX_MESSAGE", 50):
+            telegram.send_telegram_message(session, config, settings, message, force_send=True)
 
         posted_texts = [post["data"]["text"] for post in session.posts]
         self.assertEqual(posted_texts, [f"`{'a' * 30}`\n", f"`{'b' * 30}`"])
@@ -79,22 +80,22 @@ class TelegramMessageSplittingTests(unittest.TestCase):
 
     def test_short_message_still_posts_once(self):
         session = FakeTelegramSession()
-        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
-        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
 
-        PnLBot.send_telegram_message(session, config, settings, "`hello`", force_send=True)
+        telegram.send_telegram_message(session, config, settings, "`hello`", force_send=True)
 
         self.assertEqual(len(session.posts), 1)
         self.assertEqual(session.posts[0]["data"]["text"], "`hello`")
 
     def test_oversized_single_line_chunks_with_unbalanced_markdown_disable_parse_mode(self):
         session = FakeTelegramSession()
-        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
-        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
         message = f"`{'a' * 80}`"
 
-        with patch.object(PnLBot, "TELEGRAM_MAX_MESSAGE", 40):
-            PnLBot.send_telegram_message(session, config, settings, message, force_send=True)
+        with patch.object(telegram, "TELEGRAM_MAX_MESSAGE", 40):
+            telegram.send_telegram_message(session, config, settings, message, force_send=True)
 
         odd_backtick_posts = [
             post for post in session.posts if post["data"]["text"].count("`") % 2 == 1
@@ -106,11 +107,11 @@ class TelegramMessageSplittingTests(unittest.TestCase):
 class TelegramCommandPollingTests(unittest.TestCase):
     def test_polling_conflict_disables_command_polling(self):
         session = FakeConflictPollingSession()
-        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
-        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
-        state = PnLBot.BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
 
-        update_id = PnLBot.check_telegram_commands(
+        update_id = commands.check_telegram_commands(
             session,
             config,
             settings,
@@ -131,9 +132,9 @@ class TelegramCommandPollingTests(unittest.TestCase):
             }
         ]
         session = FakeCommandSession(updates)
-        config = PnLBot.EnvConfig("key", "secret", "token", "chat")
-        settings = PnLBot.BotSettings(3600, -20, 20, True, (0, 5))
-        state = PnLBot.BotState(
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
             3600,
             True,
             -20,
@@ -144,10 +145,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
             min_pnl=100.0,
         )
 
-        with patch.object(PnLBot, "get_futures_pnl", return_value=50.0):
-            with patch.object(PnLBot, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                with patch.object(PnLBot, "persist_runtime_state") as persist_state:
-                    update_id = PnLBot.check_telegram_commands(
+        with patch.object(command_handlers, "get_futures_pnl", return_value=50.0):
+            with patch.object(command_handlers, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                with patch.object(command_handlers, "persist_runtime_state") as persist_state:
+                    update_id = commands.check_telegram_commands(
                         session,
                         config,
                         settings,

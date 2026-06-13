@@ -131,7 +131,26 @@ Current air quality information:
 
 ## Files & Constants
 
-- PnL bot script: `PnLBot.py`
+- PnL bot entrypoint: `main.py`
+- Package modules: `pnlbot/`
+  - `command_handlers.py` – concrete Telegram command actions
+  - `commands.py` – Telegram polling and command routing
+  - `config.py` – environment parsing and runtime value parsers
+  - `config_commands.py` – runtime `/config` command parsing and updates
+  - `constants.py` – shared constants
+  - `http.py` – retry-enabled `requests.Session` setup
+  - `logging.py` – runtime log rotation stream
+  - `market_data.py` – Binance and IQAir API clients
+  - `messages.py` – Telegram status message formatting
+  - `models.py` – bot settings, environment config, and state dataclasses
+  - `monitoring.py` – scheduled portfolio, AQI, outage, and system monitoring
+  - `outages.py` – EVN outage parsing
+  - `persistence.py` – JSON state load/save helpers
+  - `runtime.py` – startup wiring and main bot loop
+  - `state.py` – shared state update helpers
+  - `system_info.py` – host CPU, memory, disk, and process summaries
+  - `telegram.py` – Telegram send/pin helper functions
+  - `time_utils.py` – uptime, lunar date, and daily schedule helpers
 - State snapshot: `pnl-bot-state.json` (hardcoded)
 - Timezone: Configurable via `PNL_BOT_TIMEZONE` (default: `Asia/Ho_Chi_Minh`)
 - System Alerts: Configurable via `PNL_BOT_*_ALERT_THRESHOLD`
@@ -151,7 +170,7 @@ Current air quality information:
    IQAIR_API_KEY=your_iqair_key
    ```
 2. Install dependencies: `pip install -r requirements.txt` (ensure `requests`, `psutil`, `pytz`, `lunar-vn` are available), should be installed in a venv directory.
-3. Run the bot: `python PnLBot.py`.
+3. Run the bot: `python main.py`.
 4. Send `/status` from the configured Telegram chat to confirm connectivity.
 
 Extend the script by customizing thresholds, integrating detailed trade reports, or anything you want.

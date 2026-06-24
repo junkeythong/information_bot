@@ -9,7 +9,7 @@ from .models import BotState, EnvConfig
 from .state import update_pnl_range, update_spot_balance_range
 
 BalanceResult = Union[dict, float, str]
-PnlResult = Union[float, str]
+PnlResult = Union[dict, float, str]
 
 
 @dataclass
@@ -27,6 +27,14 @@ def get_spot_total(spot_balance: BalanceResult) -> float:
     return 0.0
 
 
+def get_futures_total(pnl: PnlResult) -> float:
+    if isinstance(pnl, dict):
+        return float(pnl.get("total", 0.0))
+    if isinstance(pnl, (int, float)):
+        return float(pnl)
+    return 0.0
+
+
 def refresh_futures_pnl(
     session: requests.Session,
     config: EnvConfig,
@@ -37,13 +45,14 @@ def refresh_futures_pnl(
     pnl = get_futures_pnl(session, config)
     state_changed = False
 
-    if isinstance(pnl, (int, float)):
+    pnl_total = get_futures_total(pnl)
+    if isinstance(pnl, (dict, int, float)):
         if reset_range:
-            state.max_pnl = pnl
-            state.min_pnl = pnl
+            state.max_pnl = pnl_total
+            state.min_pnl = pnl_total
             state_changed = True
 
-        state_changed = update_pnl_range(state, pnl) or state_changed
+        state_changed = update_pnl_range(state, pnl_total) or state_changed
 
     return pnl, state_changed
 
@@ -136,19 +145,50 @@ def format_futures_pnl_summary(
     use_alert_labels: bool = False,
     hide_zero: bool = False,
 ) -> str:
-    if not isinstance(pnl, (int, float)):
+    if not isinstance(pnl, (dict, int, float)):
         return f"`{pnl}`"
 
-    if hide_zero and pnl == 0.0:
+    pnl_total = get_futures_total(pnl)
+    if hide_zero and pnl_total == 0.0:
         return ""
 
-    if use_alert_labels and pnl <= state.pnl_alert_low:
-        return f"Heavy loss: 🔻 `{pnl:,.2f} USDT`\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
-    if use_alert_labels and pnl >= state.pnl_alert_high:
-        return f"High profit: 🟢 `{pnl:,.2f} USDT`\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
+    if use_alert_labels and pnl_total <= state.pnl_alert_low:
+        lines = [f"Heavy loss: 🔻 `{pnl_total:,.2f} USDT`"]
+    elif use_alert_labels and pnl_total >= state.pnl_alert_high:
+        lines = [f"High profit: 🟢 `{pnl_total:,.2f} USDT`"]
+    else:
+        icon = get_pnl_icon(pnl_total)
+        lines = [f"💰 *Futures:* `{pnl_total:,.2f} USDT` {icon}"]
 
-    icon = get_pnl_icon(pnl)
-    return f"💰 *Futures:* `{pnl:,.2f} USDT` {icon}\n📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`"
+    lines.append(f"📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`")
+
+    if isinstance(pnl, dict):
+        open_positions = pnl.get("open_positions", [])
+        closed_trades = pnl.get("closed_trades", [])
+
+        lines.append("")
+        lines.append("*Open Positions:*")
+        if open_positions:
+            for position in open_positions:
+                unrealized_pnl = float(position.get("unrealized_pnl", 0.0))
+                lines.append(
+                    f"• `{position.get('symbol', 'UNKNOWN')}`: `{unrealized_pnl:,.2f} USDT` {get_pnl_icon(unrealized_pnl)}"
+                )
+        else:
+            lines.append("• None")
+
+        lines.append("")
+        lines.append("*Latest Closed Positions:*")
+        if closed_trades:
+            for trade in closed_trades[:3]:
+                trade_pnl = float(trade.get("pnl", 0.0))
+                lines.append(
+                    f"• `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}"
+                )
+        else:
+            lines.append("• None")
+
+    return "\n".join(lines)
 
 
 def _format_monitoring_aqi(session: requests.Session, config: EnvConfig) -> str:

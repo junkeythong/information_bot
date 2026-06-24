@@ -162,6 +162,52 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertEqual(state.min_pnl, 50.0)
         persist_state.assert_called_once()
 
+    def test_status_command_includes_structured_futures_trade_details(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/status", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            max_pnl=50.0,
+            min_pnl=-10.0,
+        )
+        futures_payload = {
+            "total": 12.5,
+            "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 12.5}],
+            "closed_trades": [{"symbol": "ETHUSDT", "pnl": -2.25}],
+        }
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=futures_payload):
+            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                commands.check_telegram_commands(
+                    session,
+                    config,
+                    settings,
+                    state,
+                    state.last_update_id,
+                    poll_timeout=30,
+                )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertIn("Current PnL", message)
+        self.assertIn("12.50 USDT", message)
+        self.assertIn("Open Positions", message)
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("Latest Closed Positions", message)
+        self.assertIn("ETHUSDT", message)
+        self.assertNotIn("{'total'", message)
+
 
 if __name__ == "__main__":
     unittest.main()

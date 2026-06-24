@@ -90,6 +90,50 @@ class PortfolioSnapshotTests(unittest.TestCase):
         self.assertIn("High profit", message)
         self.assertIn("AQI", message)
 
+    def test_format_futures_pnl_summary_includes_open_and_closed_trades(self):
+        state = make_state(max_pnl=50.0, min_pnl=-10.0)
+        pnl = {
+            "total": 12.5,
+            "open_positions": [
+                {"symbol": "BTCUSDT", "unrealized_pnl": 10.0},
+                {"symbol": "ETHUSDT", "unrealized_pnl": 2.5},
+            ],
+            "closed_trades": [
+                {"symbol": "SOLUSDT", "pnl": 4.25},
+                {"symbol": "BNBUSDT", "pnl": -1.5},
+                {"symbol": "ADAUSDT", "pnl": 0.0},
+            ],
+        }
+
+        message = portfolio.format_futures_pnl_summary(state, pnl)
+
+        self.assertIn("Futures", message)
+        self.assertIn("12.50 USDT", message)
+        self.assertIn("Open Positions", message)
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("10.00 USDT", message)
+        self.assertIn("Latest Closed Positions", message)
+        self.assertIn("SOLUSDT", message)
+        self.assertIn("4.25 USDT", message)
+        self.assertIn("BNBUSDT", message)
+        self.assertIn("-1.50 USDT", message)
+
+    def test_refresh_futures_pnl_tracks_range_from_structured_total(self):
+        state = make_state(max_pnl=5.0, min_pnl=5.0)
+        config = EnvConfig("key", "secret", "token", "chat")
+
+        with patch.object(
+            portfolio,
+            "get_futures_pnl",
+            return_value={"total": -7.5, "open_positions": [], "closed_trades": []},
+        ):
+            pnl, state_changed = portfolio.refresh_futures_pnl(None, config, state)
+
+        self.assertEqual(pnl["total"], -7.5)
+        self.assertTrue(state_changed)
+        self.assertEqual(state.max_pnl, 5.0)
+        self.assertEqual(state.min_pnl, -7.5)
+
 
 if __name__ == "__main__":
     unittest.main()

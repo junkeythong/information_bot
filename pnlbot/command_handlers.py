@@ -254,7 +254,7 @@ def handle_help_command(
         settings,
         "*ℹ️ Info commands:*\n"
         "• `/status` – Comprehensive snapshot (Futures, Spot, Config)\n"
-        "• `/futures` – Quick unrealized PnL check\n"
+        "• `/futures` – Futures PnL, open positions, and latest closed positions\n"
         "• `/spot` – Quick spot balance check\n"
         "• `/aqi` – Air quality index (IQAir)\n"
         "• `/sysinfo` – System information\n"

@@ -76,13 +76,42 @@ def compose_status_message(
         "",
         "💰 *Futures:*",
     ])
-    if isinstance(current_pnl, (int, float)):
-        icon = get_pnl_icon(current_pnl)
-        lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT` {icon}")
+    if isinstance(current_pnl, dict):
+        total_pnl = float(current_pnl.get("total", 0.0))
+        icon = get_pnl_icon(total_pnl)
+        lines.append(f"• Current PnL: `{total_pnl:,.2f} USDT` {icon}")
     else:
-        lines.append(f"• Current PnL: `{current_pnl}`")
+        if isinstance(current_pnl, (int, float)):
+            icon = get_pnl_icon(current_pnl)
+            lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT` {icon}")
+        else:
+            lines.append(f"• Current PnL: `{current_pnl}`")
     lines.extend([
         f"• Max PnL: `{state.max_pnl:,.2f} USDT`, Min: `{state.min_pnl:,.2f} USDT`",
     ])
+
+    if isinstance(current_pnl, dict):
+        open_positions = current_pnl.get("open_positions", [])
+        closed_trades = current_pnl.get("closed_trades", [])
+
+        lines.append("• Open Positions:")
+        if open_positions:
+            for position in open_positions:
+                unrealized_pnl = float(position.get("unrealized_pnl", 0.0))
+                lines.append(
+                    f"  ▫️ `{position.get('symbol', 'UNKNOWN')}`: `{unrealized_pnl:,.2f} USDT` {get_pnl_icon(unrealized_pnl)}"
+                )
+        else:
+            lines.append("  ▫️ None")
+
+        lines.append("• Latest Closed Positions:")
+        if closed_trades:
+            for trade in closed_trades[:3]:
+                trade_pnl = float(trade.get("pnl", 0.0))
+                lines.append(
+                    f"  ▫️ `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}"
+                )
+        else:
+            lines.append("  ▫️ None")
 
     return "\n".join(lines)

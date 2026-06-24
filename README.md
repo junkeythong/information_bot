@@ -70,7 +70,7 @@ Runtime changes are persisted to the local state file.
 | Command | Description |
 | --- | --- |
 | `/status` | Full bot and portfolio status |
-| `/futures` | Current Futures PnL |
+| `/futures` | Futures PnL, open positions, and latest closed positions |
 | `/spot` | Spot wallet summary |
 | `/aqi` | Air quality report, when configured |
 | `/outage` | EVN power outage schedule, when configured |
@@ -105,6 +105,13 @@ Runtime changes are persisted to the local state file.
 💰 *Futures:*
 • Current PnL: `125.40 USDT` 🟢
 • Max PnL: `250.00 USDT`, Min: `-40.00 USDT`
+• Open Positions:
+  ▫️ `BTCUSDT`: `100.00 USDT` 🟢
+  ▫️ `ETHUSDT`: `25.40 USDT` 🟢
+• Latest Closed Positions:
+  ▫️ `SOLUSDT`: `8.50 USDT` 🟢
+  ▫️ `BNBUSDT`: `-3.10 USDT` 🔴
+  ▫️ `ADAUSDT`: `0.00 USDT` ⚪
 ```
 
 ### `/spot`
@@ -123,6 +130,15 @@ Runtime changes are persisted to the local state file.
 ```text
 💰 *Futures:* `125.40 USDT` 🟢
 📊 *Range:* `[-40.00, 250.00]`
+
+*Open Positions:*
+• `BTCUSDT`: `100.00 USDT` 🟢
+• `ETHUSDT`: `25.40 USDT` 🟢
+
+*Latest Closed Positions:*
+• `SOLUSDT`: `8.50 USDT` 🟢
+• `BNBUSDT`: `-3.10 USDT` 🔴
+• `ADAUSDT`: `0.00 USDT` ⚪
 ```
 
 ### `/aqi`

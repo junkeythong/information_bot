@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+import datetime
+
 import requests
 
 from .models import EnvConfig
@@ -189,6 +191,40 @@ def _normalize_freqtrade_pair(pair: object) -> str:
     return value.replace("/", "").replace("-", "").replace("_", "")
 
 
+def _trade_recency_key(trade: dict, index: int) -> tuple:
+    timestamp_fields = (
+        "close_timestamp",
+        "close_date_timestamp",
+        "close_time",
+        "close_date",
+        "close_date_utc",
+    )
+    for field in timestamp_fields:
+        value = trade.get(field)
+        if value in (None, ""):
+            continue
+        try:
+            return (2, float(value), index)
+        except (TypeError, ValueError):
+            if isinstance(value, str):
+                normalized = value.strip().replace("Z", "+00:00")
+                try:
+                    return (2, datetime.datetime.fromisoformat(normalized).timestamp(), index)
+                except ValueError:
+                    pass
+
+    for field in ("trade_id", "id"):
+        value = trade.get(field)
+        if value in (None, ""):
+            continue
+        try:
+            return (1, float(value), index)
+        except (TypeError, ValueError):
+            pass
+
+    return (0, float(index), index)
+
+
 def fetch_freqtrade_exit_reasons(
     session: requests.Session,
     config: EnvConfig,
@@ -197,7 +233,7 @@ def fetch_freqtrade_exit_reasons(
     timeout: int = 5,
     limit: int = 500,
 ) -> dict:
-    reasons = {}
+    selected = {}
     for port in ports:
         try:
             response = _authenticated_get(
@@ -210,16 +246,19 @@ def fetch_freqtrade_exit_reasons(
             )
             payload = response.json()
             trades = payload.get("trades", payload if isinstance(payload, list) else [])
-            for trade in trades:
+            for index, trade in enumerate(trades):
                 if not isinstance(trade, dict) or trade.get("is_open") is True:
                     continue
                 symbol = _normalize_freqtrade_pair(trade.get("pair"))
                 reason = trade.get("exit_reason") or trade.get("sell_reason")
-                if symbol and reason and symbol not in reasons:
-                    reasons[symbol] = str(reason)
+                if not (symbol and reason):
+                    continue
+                recency_key = _trade_recency_key(trade, index)
+                if symbol not in selected or recency_key > selected[symbol][0]:
+                    selected[symbol] = (recency_key, str(reason))
         except Exception:
             continue
-    return reasons
+    return {symbol: reason for symbol, (_, reason) in selected.items()}
 
 
 def apply_exit_reasons_to_closed_trades(pnl: object, exit_reasons: dict) -> object:

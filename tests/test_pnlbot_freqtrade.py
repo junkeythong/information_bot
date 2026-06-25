@@ -210,6 +210,34 @@ class FreqtradeExitReasonTests(unittest.TestCase):
         self.assertEqual(reasons["BTCUSDT"], "roi")
         self.assertEqual(reasons["ETHUSDT"], "stop_loss")
 
+    def test_fetch_exit_reasons_uses_latest_closed_trade_for_duplicate_symbol(self):
+        from pnlbot.freqtrade import clear_freqtrade_token_cache, fetch_freqtrade_exit_reasons
+
+        clear_freqtrade_token_cache()
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        session = FakeSession([
+            FakeResponse({
+                "trades": [
+                    {
+                        "pair": "BTC/USDT:USDT",
+                        "exit_reason": "stop_loss",
+                        "is_open": False,
+                        "close_timestamp": 1000,
+                    },
+                    {
+                        "pair": "BTC/USDT:USDT",
+                        "exit_reason": "roi",
+                        "is_open": False,
+                        "close_timestamp": 2000,
+                    },
+                ]
+            }),
+        ])
+
+        reasons = fetch_freqtrade_exit_reasons(session, config, [8123])
+
+        self.assertEqual(reasons["BTCUSDT"], "roi")
+
     def test_apply_exit_reasons_adds_reason_to_matching_closed_trades(self):
         from pnlbot.freqtrade import apply_exit_reasons_to_closed_trades
 

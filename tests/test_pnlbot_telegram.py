@@ -254,6 +254,48 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertIn("`8123`: ✅ healthy", message)
         self.assertIn("`8214`: 🔴 stopped", message)
 
+    def test_status_command_enriches_closed_positions_with_freqtrade_exit_reason(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/status", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            freqtrade_ports=[8123],
+        )
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
+        }
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                with patch.object(command_handlers, "fetch_freqtrade_exit_reasons", return_value={"BTCUSDT": "roi"}):
+                    with patch.object(command_handlers, "check_freqtrade_bots", return_value=[]):
+                        commands.check_telegram_commands(
+                            session,
+                            config,
+                            settings,
+                            state,
+                            state.last_update_id,
+                            poll_timeout=30,
+                        )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("exit: `roi`", message)
+
     def test_futures_command_includes_bot_health_when_ports_are_configured(self):
         updates = [
             {

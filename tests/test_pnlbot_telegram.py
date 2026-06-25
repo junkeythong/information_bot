@@ -279,9 +279,15 @@ class TelegramCommandPollingTests(unittest.TestCase):
             "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
         }
 
+        enriched_pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"}],
+        }
+
         with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
             with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                with patch.object(command_handlers, "fetch_freqtrade_exit_reasons", return_value={"BTCUSDT": "roi"}):
+                with patch.object(command_handlers, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
                     with patch.object(command_handlers, "check_freqtrade_bots", return_value=[]):
                         commands.check_telegram_commands(
                             session,
@@ -361,8 +367,14 @@ class TelegramCommandPollingTests(unittest.TestCase):
             "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
         }
 
+        enriched_pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"}],
+        }
+
         with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
-            with patch.object(command_handlers, "fetch_freqtrade_exit_reasons", return_value={"BTCUSDT": "roi"}):
+            with patch.object(command_handlers, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
                 with patch.object(
                     command_handlers,
                     "check_freqtrade_bots",

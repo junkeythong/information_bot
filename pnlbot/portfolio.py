@@ -4,7 +4,7 @@ from typing import Optional, Union
 import requests
 
 from .market_data import get_air_quality, get_futures_pnl, get_spot_balance
-from .messages import get_pnl_icon
+from .messages import format_closed_trade_line, get_pnl_icon
 from .models import BotState, EnvConfig
 from .state import update_pnl_range, update_spot_balance_range
 
@@ -181,12 +181,7 @@ def format_futures_pnl_summary(
         lines.append("*Latest Closed Positions:*")
         if closed_trades:
             for trade in closed_trades[:3]:
-                trade_pnl = float(trade.get("pnl", 0.0))
-                exit_reason = trade.get("exit_reason")
-                reason_text = f" (exit: `{exit_reason}`)" if exit_reason else ""
-                lines.append(
-                    f"• `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
-                )
+                lines.append(format_closed_trade_line(trade))
         else:
             lines.append("• None")
 

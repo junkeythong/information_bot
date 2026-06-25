@@ -10,6 +10,13 @@ def get_pnl_icon(val: float) -> str:
     return "⚪"
 
 
+def format_closed_trade_line(trade: dict, *, bullet: str = "•") -> str:
+    trade_pnl = float(trade.get("pnl", 0.0))
+    exit_reason = trade.get("exit_reason")
+    reason_text = f" (exit: `{exit_reason}`)" if exit_reason else ""
+    return f"{bullet} `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
+
+
 def compose_status_message(
     state: BotState,
     config: EnvConfig,
@@ -107,12 +114,7 @@ def compose_status_message(
         lines.append("• Latest Closed Positions:")
         if closed_trades:
             for trade in closed_trades[:3]:
-                trade_pnl = float(trade.get("pnl", 0.0))
-                exit_reason = trade.get("exit_reason")
-                reason_text = f" (exit: `{exit_reason}`)" if exit_reason else ""
-                lines.append(
-                    f"  ▫️ `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
-                )
+                lines.append(format_closed_trade_line(trade, bullet="  ▫️"))
         else:
             lines.append("  ▫️ None")
 

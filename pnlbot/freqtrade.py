@@ -283,3 +283,16 @@ def apply_exit_reasons_to_closed_trades(pnl: object, exit_reasons: dict) -> obje
         updated_trades.append(updated_trade)
     updated["closed_trades"] = updated_trades
     return updated
+
+
+def enrich_pnl_with_freqtrade_exit_reasons(
+    session: requests.Session,
+    config: EnvConfig,
+    ports: List[int],
+    pnl: object,
+) -> object:
+    if not ports:
+        return pnl
+
+    exit_reasons = fetch_freqtrade_exit_reasons(session, config, ports)
+    return apply_exit_reasons_to_closed_trades(pnl, exit_reasons)

@@ -23,7 +23,13 @@ class StartupStatusMessageTests(unittest.TestCase):
             "closed_trades": [{"symbol": "TAOUSDT", "pnl": -0.06}],
         }
 
-        with patch.object(runtime, "fetch_freqtrade_exit_reasons", return_value={"TAOUSDT": "roi"}):
+        enriched_pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "TAOUSDT", "pnl": -0.06, "exit_reason": "roi"}],
+        }
+
+        with patch.object(runtime, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
             with patch.object(
                 runtime,
                 "check_freqtrade_bots",

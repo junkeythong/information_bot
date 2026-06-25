@@ -551,11 +551,16 @@ class FreqtradeMonitoringTests(unittest.TestCase):
             state_changed=False,
         )
 
+        enriched_pnl = {
+            "total": 12.5,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"}],
+        }
+
         with patch.object(monitoring.portfolio, "refresh_portfolio_snapshot", return_value=snapshot):
-            with patch.object(monitoring, "fetch_freqtrade_exit_reasons", return_value={"BTCUSDT": "roi"}):
-                with patch.object(monitoring, "check_freqtrade_bots", return_value=[]):
-                    with patch.object(monitoring, "send_telegram_message") as send_message:
-                        monitoring.monitor_loop(None, config, settings, state)
+            with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
+                with patch.object(monitoring, "send_telegram_message") as send_message:
+                    monitoring.monitor_loop(None, config, settings, state)
 
         messages = [call.args[3] for call in send_message.call_args_list]
         self.assertTrue(any("exit: `roi`" in message for message in messages))
@@ -585,33 +590,30 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         self.assertIn("8123", send_message.call_args.args[3])
         self.assertIn("connection failed", send_message.call_args.args[3])
 
-    def test_monitor_loop_sends_freqtrade_alert_for_unhealthy_bot_once_per_cooldown(self):
+    def test_monitor_loop_does_not_send_freqtrade_health_alerts(self):
         settings, state = make_settings_and_state()
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
         state.freqtrade_ports = [8123]
-        state.freqtrade_alert_cooldown_seconds = 300
+        state.pnl_alert_low = -10
+        state.pnl_alert_high = 10
         state.last_outage_check = monitoring.time.time()
 
-        with patch.object(portfolio, "get_futures_pnl", return_value=0.0):
-            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                with patch.object(
-                    monitoring,
-                    "check_freqtrade_bots",
-                    return_value=[FreqtradeHealthResult(8123, False, "stopped")],
-                ):
-                    with patch.object(monitoring.time, "time", side_effect=[1000.0, 1010.0]):
-                        with patch.object(monitoring, "send_telegram_message") as send_message:
-                            monitoring.monitor_loop(None, config, settings, state)
-                            monitoring.monitor_loop(None, config, settings, state)
+        snapshot = portfolio.PortfolioSnapshot(
+            pnl=0.0,
+            spot_balance={"total": 0.0, "breakdown": []},
+            state_changed=False,
+        )
 
-        freqtrade_alerts = [
-            call.args[3]
-            for call in send_message.call_args_list
-            if "Freqtrade" in call.args[3]
-        ]
-        self.assertEqual(len(freqtrade_alerts), 1)
-        self.assertIn("8123", freqtrade_alerts[0])
-        self.assertIn("stopped", freqtrade_alerts[0])
+        with patch.object(monitoring.portfolio, "refresh_portfolio_snapshot", return_value=snapshot):
+            with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=0.0):
+                with patch.object(monitoring, "check_freqtrade_bots") as check_bots:
+                    with patch.object(monitoring, "send_telegram_message") as send_message:
+                        monitoring.monitor_loop(None, config, settings, state)
+
+        check_bots.assert_not_called()
+        self.assertFalse(
+            any("Freqtrade Health Alert" in call.args[3] for call in send_message.call_args_list)
+        )
 
 
 class DailyStatusSchedulingTests(unittest.TestCase):

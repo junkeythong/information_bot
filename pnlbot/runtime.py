@@ -15,9 +15,8 @@ from pnlbot.constants import (
     TELEGRAM_POLL_TIMEOUT,
 )
 from pnlbot.freqtrade import (
-    apply_exit_reasons_to_closed_trades,
     check_freqtrade_bots,
-    fetch_freqtrade_exit_reasons,
+    enrich_pnl_with_freqtrade_exit_reasons,
     format_freqtrade_status_section,
 )
 from pnlbot.http import create_retry_session
@@ -54,9 +53,7 @@ def compose_startup_status_message(
     *,
     spot_balance: object,
 ) -> str:
-    if state.freqtrade_ports:
-        exit_reasons = fetch_freqtrade_exit_reasons(session, config, state.freqtrade_ports)
-        pnl = apply_exit_reasons_to_closed_trades(pnl, exit_reasons)
+    pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, pnl)
 
     message = compose_status_message(state, config, None, pnl, spot_balance=spot_balance)
     if state.freqtrade_ports:

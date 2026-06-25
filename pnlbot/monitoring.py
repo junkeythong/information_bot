@@ -7,9 +7,8 @@ import requests
 from . import portfolio
 from .constants import POWER_OUTAGE_REFRESH_SECONDS, STATE_FILE_PATH
 from .freqtrade import (
-    apply_exit_reasons_to_closed_trades,
     check_freqtrade_bots,
-    fetch_freqtrade_exit_reasons,
+    enrich_pnl_with_freqtrade_exit_reasons,
     format_freqtrade_alert,
 )
 from .models import BotSettings, BotState, EnvConfig
@@ -107,9 +106,7 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
         send_telegram_message(session, config, settings, snapshot.pnl, state=state, force_send=True)
         return
 
-    if state.freqtrade_ports:
-        exit_reasons = fetch_freqtrade_exit_reasons(session, config, state.freqtrade_ports)
-        snapshot.pnl = apply_exit_reasons_to_closed_trades(snapshot.pnl, exit_reasons)
+    snapshot.pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, snapshot.pnl)
 
     message = portfolio.format_monitoring_message(session, config, state, snapshot)
     if message:
@@ -120,9 +117,6 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             message,
             state=state,
         )
-
-    if maybe_send_freqtrade_health_alert(session, config, settings, state, now=now):
-        snapshot.state_changed = True
 
     # Power Outage Check
     if now - state.last_outage_check >= POWER_OUTAGE_REFRESH_SECONDS:

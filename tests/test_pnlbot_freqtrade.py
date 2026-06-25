@@ -255,6 +255,36 @@ class FreqtradeExitReasonTests(unittest.TestCase):
         self.assertEqual(updated["closed_trades"][0]["exit_reason"], "roi")
         self.assertNotIn("exit_reason", updated["closed_trades"][1])
 
+    def test_enrich_pnl_with_exit_reasons_returns_original_pnl_without_ports(self):
+        from pnlbot.freqtrade import enrich_pnl_with_freqtrade_exit_reasons
+
+        pnl = {"total": 0.0, "closed_trades": []}
+        config = EnvConfig("key", "secret", "token", "chat")
+
+        self.assertIs(enrich_pnl_with_freqtrade_exit_reasons(None, config, [], pnl), pnl)
+
+    def test_enrich_pnl_with_exit_reasons_fetches_and_applies_reasons(self):
+        from pnlbot.freqtrade import clear_freqtrade_token_cache, enrich_pnl_with_freqtrade_exit_reasons
+
+        clear_freqtrade_token_cache()
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        session = FakeSession([
+            FakeResponse({
+                "trades": [
+                    {"pair": "BTC/USDT:USDT", "exit_reason": "roi", "is_open": False},
+                ]
+            }),
+        ])
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 10.0}],
+        }
+
+        updated = enrich_pnl_with_freqtrade_exit_reasons(session, config, [8123], pnl)
+
+        self.assertEqual(updated["closed_trades"][0]["exit_reason"], "roi")
+
 
 if __name__ == "__main__":
     unittest.main()

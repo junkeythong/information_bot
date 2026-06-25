@@ -182,8 +182,10 @@ def format_futures_pnl_summary(
         if closed_trades:
             for trade in closed_trades[:3]:
                 trade_pnl = float(trade.get("pnl", 0.0))
+                exit_reason = trade.get("exit_reason")
+                reason_text = f" (exit: `{exit_reason}`)" if exit_reason else ""
                 lines.append(
-                    f"• `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}"
+                    f"• `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
                 )
         else:
             lines.append("• None")

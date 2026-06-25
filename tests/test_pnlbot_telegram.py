@@ -4,6 +4,7 @@ from unittest.mock import patch
 import requests
 from pnlbot import command_handlers, commands, portfolio, telegram
 from pnlbot.models import BotSettings, BotState, EnvConfig
+from pnlbot.freqtrade import FreqtradeHealthResult
 
 
 class FakeTelegramResponse:
@@ -185,7 +186,7 @@ class TelegramCommandPollingTests(unittest.TestCase):
         futures_payload = {
             "total": 12.5,
             "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 12.5}],
-            "closed_trades": [{"symbol": "ETHUSDT", "pnl": -2.25}],
+            "closed_trades": [{"symbol": "ETHUSDT", "pnl": -2.25, "exit_reason": "roi"}],
         }
 
         with patch.object(portfolio, "get_futures_pnl", return_value=futures_payload):
@@ -207,6 +208,171 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertIn("Latest Closed Positions", message)
         self.assertIn("ETHUSDT", message)
         self.assertNotIn("{'total'", message)
+
+    def test_status_command_includes_freqtrade_health_when_configured(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/status", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            freqtrade_ports=[8123, 8214],
+        )
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=0.0):
+            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+                with patch.object(
+                    command_handlers,
+                    "check_freqtrade_bots",
+                    return_value=[
+                        FreqtradeHealthResult(8123, True, "healthy"),
+                        FreqtradeHealthResult(8214, False, "stopped"),
+                    ],
+                ):
+                    commands.check_telegram_commands(
+                        session,
+                        config,
+                        settings,
+                        state,
+                        state.last_update_id,
+                        poll_timeout=30,
+                    )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertIn("*Bots:*", message)
+        self.assertNotIn("Freqtrade Bots", message)
+        self.assertIn("`8123`: ✅ healthy", message)
+        self.assertIn("`8214`: 🔴 stopped", message)
+
+    def test_futures_command_includes_bot_health_when_ports_are_configured(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/futures", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            freqtrade_ports=[8123],
+        )
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=0.0):
+            with patch.object(
+                command_handlers,
+                "check_freqtrade_bots",
+                return_value=[FreqtradeHealthResult(8123, True, "healthy")],
+            ):
+                commands.check_telegram_commands(
+                    session,
+                    config,
+                    settings,
+                    state,
+                    state.last_update_id,
+                    poll_timeout=30,
+                )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertIn("*Bots:*", message)
+        self.assertIn("`8123`: ✅ healthy", message)
+
+
+    def test_futures_command_enriches_closed_positions_with_freqtrade_exit_reason(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/futures", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_username="user", freqtrade_api_password="pass")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            freqtrade_ports=[8123],
+        )
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
+        }
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(command_handlers, "fetch_freqtrade_exit_reasons", return_value={"BTCUSDT": "roi"}):
+                with patch.object(
+                    command_handlers,
+                    "check_freqtrade_bots",
+                    return_value=[FreqtradeHealthResult(8123, True, "healthy")],
+                ):
+                    commands.check_telegram_commands(
+                        session,
+                        config,
+                        settings,
+                        state,
+                        state.last_update_id,
+                        poll_timeout=30,
+                    )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("exit: `roi`", message)
+
+    def test_spot_command_does_not_include_bot_health_when_ports_are_configured(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/spot", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(
+            3600,
+            True,
+            -20,
+            20,
+            (0, 5),
+            last_update_id=123,
+            freqtrade_ports=[8123],
+        )
+
+        with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
+            with patch.object(command_handlers, "check_freqtrade_bots") as check_bots:
+                commands.check_telegram_commands(
+                    session,
+                    config,
+                    settings,
+                    state,
+                    state.last_update_id,
+                    poll_timeout=30,
+                )
+
+        message = session.posts[0]["data"]["text"]
+        self.assertNotIn("*Bots:*", message)
+        check_bots.assert_not_called()
 
 
 if __name__ == "__main__":

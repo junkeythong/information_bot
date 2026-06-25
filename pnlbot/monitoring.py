@@ -6,6 +6,12 @@ import requests
 
 from . import portfolio
 from .constants import POWER_OUTAGE_REFRESH_SECONDS, STATE_FILE_PATH
+from .freqtrade import (
+    apply_exit_reasons_to_closed_trades,
+    check_freqtrade_bots,
+    fetch_freqtrade_exit_reasons,
+    format_freqtrade_alert,
+)
 from .models import BotSettings, BotState, EnvConfig
 from .outages import get_power_outages
 from .persistence import persist_runtime_state
@@ -31,6 +37,9 @@ def start_system_monitor_worker(
                     if now - last_alert_time > 300:
                         send_telegram_message(session, config, settings, system_info, state=state, force_send=True)
                         last_alert_time = now
+
+                if maybe_send_freqtrade_health_alert(session, config, settings, state):
+                    persist_runtime_state(STATE_FILE_PATH, state, settings)
             except Exception as exc:
                 print(f"System monitor worker error: {exc}")
                 time.sleep(10)
@@ -45,6 +54,31 @@ def notify_exit(session: requests.Session, config: EnvConfig, settings: BotSetti
         send_telegram_message(session, config, settings, "❌ Bot has been stopped.", force_send=True)
     except Exception as exc:
         print(f"Error while sending shutdown notification: {exc}")
+
+
+def maybe_send_freqtrade_health_alert(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+    *,
+    now: float = None,
+) -> bool:
+    if not state.freqtrade_ports:
+        return False
+
+    current_time = time.time() if now is None else now
+    freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
+    freqtrade_alert = format_freqtrade_alert(freqtrade_results)
+    if not freqtrade_alert:
+        return False
+
+    if current_time - state.last_freqtrade_alert_time < state.freqtrade_alert_cooldown_seconds:
+        return False
+
+    send_telegram_message(session, config, settings, freqtrade_alert, state=state, force_send=True)
+    state.last_freqtrade_alert_time = current_time
+    return True
 
 
 def refresh_power_outages(session: requests.Session, config: EnvConfig, state: BotState) -> List[dict]:
@@ -66,11 +100,16 @@ def refresh_power_outages(session: requests.Session, config: EnvConfig, state: B
 
 
 def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> None:
+    now = time.time()
     snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
 
     if isinstance(snapshot.pnl, str):
         send_telegram_message(session, config, settings, snapshot.pnl, state=state, force_send=True)
         return
+
+    if state.freqtrade_ports:
+        exit_reasons = fetch_freqtrade_exit_reasons(session, config, state.freqtrade_ports)
+        snapshot.pnl = apply_exit_reasons_to_closed_trades(snapshot.pnl, exit_reasons)
 
     message = portfolio.format_monitoring_message(session, config, state, snapshot)
     if message:
@@ -82,8 +121,11 @@ def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSett
             state=state,
         )
 
+    if maybe_send_freqtrade_health_alert(session, config, settings, state, now=now):
+        snapshot.state_changed = True
+
     # Power Outage Check
-    if time.time() - state.last_outage_check >= POWER_OUTAGE_REFRESH_SECONDS:
+    if now - state.last_outage_check >= POWER_OUTAGE_REFRESH_SECONDS:
         new_outages = refresh_power_outages(session, config, state)
         if new_outages:
             lines = ["⚡ *NEW Power Outage detected!*"]

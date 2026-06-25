@@ -10,6 +10,7 @@ class PackageStructureTests(unittest.TestCase):
             "pnlbot.commands",
             "pnlbot.command_handlers",
             "pnlbot.config_commands",
+            "pnlbot.freqtrade",
             "pnlbot.http",
             "pnlbot.logging",
             "pnlbot.market_data",

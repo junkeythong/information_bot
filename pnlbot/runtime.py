@@ -14,6 +14,12 @@ from pnlbot.constants import (
     TELEGRAM_API_URL,
     TELEGRAM_POLL_TIMEOUT,
 )
+from pnlbot.freqtrade import (
+    apply_exit_reasons_to_closed_trades,
+    check_freqtrade_bots,
+    fetch_freqtrade_exit_reasons,
+    format_freqtrade_status_section,
+)
 from pnlbot.http import create_retry_session
 from pnlbot.logging import configure_runtime_logging
 from pnlbot.market_data import get_spot_balance
@@ -38,6 +44,25 @@ from pnlbot.telegram import (
     unpin_telegram_message,
 )
 from pnlbot.time_utils import get_lunar_date_string, should_send_daily_status
+
+
+def compose_startup_status_message(
+    session: requests.Session,
+    config: EnvConfig,
+    state: BotState,
+    pnl: object,
+    *,
+    spot_balance: object,
+) -> str:
+    if state.freqtrade_ports:
+        exit_reasons = fetch_freqtrade_exit_reasons(session, config, state.freqtrade_ports)
+        pnl = apply_exit_reasons_to_closed_trades(pnl, exit_reasons)
+
+    message = compose_status_message(state, config, None, pnl, spot_balance=spot_balance)
+    if state.freqtrade_ports:
+        freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
+        message += format_freqtrade_status_section(freqtrade_results)
+    return message
 
 
 def init_last_update_id(
@@ -149,7 +174,13 @@ def main() -> None:
             session,
             config,
             settings,
-            compose_status_message(state, config, None, pnl, spot_balance=spot_balance),
+            compose_startup_status_message(
+                session,
+                config,
+                state,
+                pnl,
+                spot_balance=spot_balance,
+            ),
             state=state,
             force_send=True,
         )

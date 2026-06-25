@@ -134,6 +134,21 @@ class PortfolioSnapshotTests(unittest.TestCase):
         self.assertEqual(state.max_pnl, 5.0)
         self.assertEqual(state.min_pnl, -7.5)
 
+    def test_format_futures_summary_includes_closed_trade_exit_reason_when_available(self):
+        state = make_state()
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [
+                {"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"},
+            ],
+        }
+
+        message = portfolio.format_futures_pnl_summary(state, pnl)
+
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("exit: `roi`", message)
+
 
 if __name__ == "__main__":
     unittest.main()

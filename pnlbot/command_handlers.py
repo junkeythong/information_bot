@@ -3,6 +3,12 @@ import requests
 from . import portfolio
 from .config_commands import handle_config_command
 from .constants import STATE_FILE_PATH
+from .freqtrade import (
+    apply_exit_reasons_to_closed_trades,
+    check_freqtrade_bots,
+    fetch_freqtrade_exit_reasons,
+    format_freqtrade_status_section,
+)
 from .market_data import get_air_quality
 from .messages import compose_status_message
 from .models import BotSettings, BotState, EnvConfig
@@ -10,6 +16,18 @@ from .outages import get_power_outages
 from .persistence import persist_runtime_state
 from .system_info import get_system_info_text
 from .telegram import send_telegram_message
+
+
+def _with_freqtrade_exit_reasons(
+    session: requests.Session,
+    config: EnvConfig,
+    state: BotState,
+    pnl: object,
+) -> object:
+    if not state.freqtrade_ports:
+        return pnl
+    exit_reasons = fetch_freqtrade_exit_reasons(session, config, state.freqtrade_ports)
+    return apply_exit_reasons_to_closed_trades(pnl, exit_reasons)
 
 
 def handle_config_command_message(
@@ -42,11 +60,17 @@ def handle_status_command(
 ) -> None:
     snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
 
+    pnl = _with_freqtrade_exit_reasons(session, config, state, snapshot.pnl)
+    message = compose_status_message(state, config, None, pnl, spot_balance=snapshot.spot_balance)
+    if state.freqtrade_ports:
+        freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
+        message += format_freqtrade_status_section(freqtrade_results)
+
     send_telegram_message(
         session,
         config,
         settings,
-        compose_status_message(state, config, None, snapshot.pnl, spot_balance=snapshot.spot_balance),
+        message,
         chat_id=chat_id,
         state=state,
         force_send=True,
@@ -107,11 +131,17 @@ def handle_futures_command(
     reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
 
     pnl, state_changed = portfolio.refresh_futures_pnl(session, config, state, reset_range=reset_mode)
+    pnl = _with_freqtrade_exit_reasons(session, config, state, pnl)
+    message = portfolio.format_futures_pnl_summary(state, pnl)
+    if state.freqtrade_ports:
+        freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
+        message += format_freqtrade_status_section(freqtrade_results)
+
     send_telegram_message(
         session,
         config,
         settings,
-        portfolio.format_futures_pnl_summary(state, pnl),
+        message,
         chat_id=chat_id,
         state=state,
         force_send=True,

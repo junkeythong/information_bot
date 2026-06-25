@@ -8,8 +8,9 @@ from .config import (
     parse_outage_filter_value,
 )
 from .constants import STATE_FILE_PATH
+from .freqtrade import parse_freqtrade_ports
 from .models import BotSettings, BotState, ConfigDefinition, EnvConfig
-from .persistence import persist_runtime_state
+from .persistence import apply_persisted_configuration, load_persisted_state, persist_runtime_state
 
 
 def _parse_pnl_low(raw: str, state: BotState, _: BotSettings) -> int:
@@ -74,6 +75,8 @@ CONFIG_ORDER = [
     "max_spot_balance",
     "min_spot_balance",
     "outage_filter",
+    "freqtrade_ports",
+    "freqtrade_alert_cooldown_seconds",
 ]
 
 
@@ -156,7 +159,27 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         getter=lambda state, settings: state.outage_street_filter or "None",
         applier=lambda value, state, settings: setattr(state, "outage_street_filter", value),
     ),
+    "freqtrade_ports": ConfigDefinition(
+        description="Comma-separated localhost Freqtrade API ports",
+        parser=lambda raw, state, settings: parse_freqtrade_ports(raw),
+        getter=lambda state, settings: ",".join(str(port) for port in state.freqtrade_ports) or "None",
+        applier=lambda value, state, settings: setattr(state, "freqtrade_ports", value),
+    ),
+    "freqtrade_alert_cooldown_seconds": ConfigDefinition(
+        description="Freqtrade health alert cooldown in seconds",
+        parser=lambda raw, state, settings: parse_int_value(raw, minimum=60, maximum=86400),
+        getter=lambda state, settings: state.freqtrade_alert_cooldown_seconds,
+        applier=lambda value, state, settings: setattr(state, "freqtrade_alert_cooldown_seconds", value),
+    ),
 }
+
+
+def _refresh_runtime_state_from_disk(state: BotState, settings: BotSettings, config: EnvConfig) -> None:
+    persisted = load_persisted_state(STATE_FILE_PATH)
+    if not persisted:
+        return
+    apply_persisted_configuration(persisted, state, settings)
+    config.outage_street_filter = state.outage_street_filter
 
 
 def format_config_listing(state: BotState, settings: BotSettings, config: EnvConfig) -> str:
@@ -167,9 +190,7 @@ def format_config_listing(state: BotState, settings: BotSettings, config: EnvCon
             value = config.outage_street_filter or "None"
         else:
             value = definition.getter(state, settings)
-        lines.append(
-            f"• `{key}`: `{format_config_value(value)}` – {definition.description}"
-        )
+        lines.append(f"• `{key}`: `{format_config_value(value)}`")
     return "\n".join(lines)
 
 
@@ -177,22 +198,13 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
     tokens = text.split(maxsplit=3)
 
     if len(tokens) == 1 or (len(tokens) >= 2 and tokens[1].lower() == "show"):
+        _refresh_runtime_state_from_disk(state, settings, config)
         return format_config_listing(state, settings, config)
 
     if len(tokens) < 2:
-        return "❌ Usage: `/config show|get|set`"
+        return "❌ Usage: `/config show|set`"
 
     action = tokens[1].lower()
-
-    if action == "get":
-        if len(tokens) < 3:
-            return "❌ Usage: `/config get <name>`"
-        key = tokens[2].lower()
-        definition = CONFIG_DEFINITIONS.get(key)
-        if not definition:
-            return "❌ Unknown configuration key. Use `/config show` to list options."
-        value = definition.getter(state, settings)
-        return f"`{key}` = `{format_config_value(value)}` – {definition.description}"
 
     if action == "set":
         if len(tokens) < 4:
@@ -205,6 +217,8 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
         try:
             parsed_value = definition.parser(value_text, state, settings)
             result = definition.applier(parsed_value, state, settings)
+            if key not in state.runtime_config_overrides:
+                state.runtime_config_overrides.append(key)
             if key == "outage_filter":
                 config.outage_street_filter = state.outage_street_filter
             persist_runtime_state(STATE_FILE_PATH, state, settings)
@@ -217,4 +231,4 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
         except ValueError as exc:
             return f"❌ {exc}"
 
-    return "❌ Unsupported config command. Use `/config show|get|set`."
+    return "❌ Unsupported config command. Use `/config show|set`."

@@ -29,6 +29,9 @@ class EnvConfig:
     cpu_alert_threshold: int = 80
     mem_alert_threshold: int = 80
     disk_alert_threshold: int = 90
+    freqtrade_api_token: Optional[str] = None
+    freqtrade_api_username: Optional[str] = None
+    freqtrade_api_password: Optional[str] = None
 
 
 @dataclass
@@ -53,6 +56,10 @@ class BotState:
     last_outage_check: float = 0.0
     last_lunar_alert_date: Optional[str] = None
     pinned_daily_message_id: Optional[int] = None
+    freqtrade_ports: List[int] = field(default_factory=list)
+    freqtrade_alert_cooldown_seconds: int = 300
+    last_freqtrade_alert_time: float = 0.0
+    runtime_config_overrides: List[str] = field(default_factory=list)
 
 
 @dataclass

@@ -162,4 +162,7 @@ def load_env_config() -> EnvConfig:
         cpu_alert_threshold=env_int("PNL_BOT_CPU_ALERT_THRESHOLD", 80),
         mem_alert_threshold=env_int("PNL_BOT_MEM_ALERT_THRESHOLD", 80),
         disk_alert_threshold=env_int("PNL_BOT_DISK_ALERT_THRESHOLD", 90),
+        freqtrade_api_token=os.getenv("FREQTRADE_API_TOKEN"),
+        freqtrade_api_username=os.getenv("FREQTRADE_API_USERNAME"),
+        freqtrade_api_password=os.getenv("FREQTRADE_API_PASSWORD"),
     )

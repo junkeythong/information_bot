@@ -168,7 +168,6 @@ def handle_futures_command(
     text: str,
 ) -> None:
     pnl, state_changed = portfolio.refresh_futures_pnl(session, config, state)
-    state_changed = portfolio.apply_open_position_interval(state, pnl) or state_changed
     pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, pnl)
     message = portfolio.format_futures_pnl_summary(state, pnl)
     if state.freqtrade_ports:

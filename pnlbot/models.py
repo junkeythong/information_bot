@@ -45,6 +45,10 @@ class BotState:
     last_update_id: Optional[int] = None
     max_spot_balance: float = 0.0
     min_spot_balance: float = 0.0
+    max_spot_assets: List[dict] = field(default_factory=list)
+    min_spot_assets: List[dict] = field(default_factory=list)
+    max_spot_observed_at: Optional[str] = None
+    min_spot_observed_at: Optional[str] = None
     init_capital: Optional[float] = None
     outage_street_filter: Optional[str] = None
     night_mode_active: bool = False
@@ -58,7 +62,6 @@ class BotState:
     freqtrade_ports: List[int] = field(default_factory=list)
     freqtrade_alert_cooldown_seconds: int = 300
     last_freqtrade_alert_time: float = 0.0
-    pre_open_position_interval_seconds: Optional[int] = None
     futures_position_ranges: Dict[str, dict] = field(default_factory=dict)
     closed_position_ranges: List[dict] = field(default_factory=list)
     runtime_config_overrides: List[str] = field(default_factory=list)

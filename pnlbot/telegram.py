@@ -88,7 +88,7 @@ def send_telegram_message(
             res.raise_for_status()
             return res.json()
     except Exception as exc:
-        print(f"Telegram send error: {exc}", flush=True)
+        print(f"Telegram send error: {sanitize_telegram_error(exc, config)}", flush=True)
         return None
 
 
@@ -112,7 +112,7 @@ def pin_telegram_message(session: requests.Session, config: EnvConfig, message_i
         res = session.post(url, data=payload, timeout=10)
         res.raise_for_status()
     except Exception as exc:
-        print(f"Telegram pin error: {exc}", flush=True)
+        print(f"Telegram pin error: {sanitize_telegram_error(exc, config)}", flush=True)
 
 
 def unpin_telegram_message(session: requests.Session, config: EnvConfig, message_id: Optional[int] = None) -> None:
@@ -124,4 +124,4 @@ def unpin_telegram_message(session: requests.Session, config: EnvConfig, message
         res = session.post(url, data=payload, timeout=10)
         res.raise_for_status()
     except Exception as exc:
-        print(f"Telegram unpin error: {exc}", flush=True)
+        print(f"Telegram unpin error: {sanitize_telegram_error(exc, config)}", flush=True)

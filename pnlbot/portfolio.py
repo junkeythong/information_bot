@@ -1,11 +1,12 @@
+import datetime
 from dataclasses import dataclass
 from typing import Optional, Union
 
+import pytz
 import requests
 
-from .constants import FUTURES_OPEN_POSITION_INTERVAL_SECONDS
-from .market_data import get_air_quality, get_futures_pnl, get_spot_balance
-from .messages import format_closed_trade_lines, format_open_position_lines, get_pnl_icon
+from .market_data import get_futures_pnl, get_spot_balance
+from .messages import format_closed_trade_lines, format_open_position_lines, format_spot_range_lines, get_pnl_icon
 from .models import BotState, EnvConfig
 from .state import update_spot_balance_range
 
@@ -34,6 +35,29 @@ def get_futures_total(pnl: PnlResult) -> float:
     if isinstance(pnl, (int, float)):
         return float(pnl)
     return 0.0
+
+
+def _spot_observed_at(config: EnvConfig) -> str:
+    now = datetime.datetime.now(pytz.timezone(config.timezone))
+    return now.strftime("%Y-%m-%d %H:%M")
+
+
+def _spot_asset_snapshot(spot_balance: BalanceResult) -> list:
+    if not isinstance(spot_balance, dict):
+        return []
+
+    snapshot = []
+    for item in spot_balance.get("breakdown", []):
+        try:
+            snapshot.append({
+                "asset": item.get("asset", "UNKNOWN"),
+                "amount": float(item.get("amount", 0.0)),
+                "usdt_value": float(item.get("usdt_value", 0.0)),
+                "price": float(item.get("price", 0.0)),
+            })
+        except (TypeError, ValueError):
+            continue
+    return snapshot
 
 
 def _position_range_key(position: dict) -> str:
@@ -156,28 +180,6 @@ def apply_position_pnl_ranges(state: BotState, pnl: PnlResult) -> bool:
     return state_changed
 
 
-def apply_open_position_interval(state: BotState, pnl: PnlResult) -> bool:
-    has_open_positions = isinstance(pnl, dict) and bool(pnl.get("open_positions"))
-    if has_open_positions:
-        if state.interval_seconds == FUTURES_OPEN_POSITION_INTERVAL_SECONDS:
-            return False
-
-        if state.pre_open_position_interval_seconds is None:
-            state.pre_open_position_interval_seconds = state.interval_seconds
-        state.interval_seconds = FUTURES_OPEN_POSITION_INTERVAL_SECONDS
-        return True
-
-    if state.pre_open_position_interval_seconds is None:
-        return False
-
-    previous_interval = state.pre_open_position_interval_seconds
-    state.pre_open_position_interval_seconds = None
-    if state.interval_seconds == previous_interval:
-        return True
-
-    state.interval_seconds = previous_interval
-    return True
-
 
 def refresh_futures_pnl(
     session: requests.Session,
@@ -204,12 +206,24 @@ def refresh_spot_balance(
     state_changed = False
 
     if total > 0:
+        asset_snapshot = _spot_asset_snapshot(spot_balance)
+        observed_at = _spot_observed_at(config)
+
         if reset_range:
             state.max_spot_balance = total
             state.min_spot_balance = total
+            state.max_spot_assets = list(asset_snapshot)
+            state.min_spot_assets = list(asset_snapshot)
+            state.max_spot_observed_at = observed_at
+            state.min_spot_observed_at = observed_at
             state_changed = True
 
-        state_changed = update_spot_balance_range(state, total) or state_changed
+        state_changed = update_spot_balance_range(
+            state,
+            total,
+            asset_snapshot=asset_snapshot,
+            observed_at=observed_at,
+        ) or state_changed
 
     return spot_balance, state_changed
 
@@ -220,12 +234,11 @@ def refresh_portfolio_snapshot(
     state: BotState,
 ) -> PortfolioSnapshot:
     pnl, pnl_changed = refresh_futures_pnl(session, config, state)
-    interval_changed = apply_open_position_interval(state, pnl)
     spot_balance, spot_changed = refresh_spot_balance(session, config, state)
     return PortfolioSnapshot(
         pnl=pnl,
         spot_balance=spot_balance,
-        state_changed=pnl_changed or spot_changed or interval_changed,
+        state_changed=pnl_changed or spot_changed,
     )
 
 
@@ -250,10 +263,23 @@ def format_spot_balance_summary(
             icon = get_pnl_icon(pnl_perc)
             pnl_perc_info = f" {icon} ({pnl_perc:+.2f}%)"
 
-        lines = [
-            f"💰 *Spot:* `{total:,.2f} USDT`{pnl_perc_info}",
-            f"📊 *Range:* `[{state.min_spot_balance:,.2f}, {state.max_spot_balance:,.2f}]`",
-        ]
+        lines = [f"💰 *Spot:* `{total:,.2f} USDT`{pnl_perc_info}"]
+        if state.min_spot_balance > 0 or state.max_spot_balance > 0:
+            lines.extend([
+                "📊 *Range:*",
+                *format_spot_range_lines(
+                    "Min",
+                    state.min_spot_balance,
+                    state.min_spot_assets,
+                    state.min_spot_observed_at,
+                ),
+                *format_spot_range_lines(
+                    "Max",
+                    state.max_spot_balance,
+                    state.max_spot_assets,
+                    state.max_spot_observed_at,
+                ),
+            ])
 
         breakdown = spot_balance.get("breakdown", [])
         if max_breakdown_items is not None:
@@ -320,30 +346,6 @@ def format_futures_pnl_summary(
     return "\n".join(lines)
 
 
-def _format_monitoring_aqi(session: requests.Session, config: EnvConfig) -> str:
-    if not config.iqair_api_key:
-        return ""
-
-    aqi_data = get_air_quality(session, config)
-    if not isinstance(aqi_data, dict):
-        return ""
-
-    aqi_us = aqi_data.get("aqi_us", 0)
-    if aqi_us <= 50:
-        aqi_emoji = "🟢"
-    elif aqi_us <= 100:
-        aqi_emoji = "🟡"
-    elif aqi_us <= 150:
-        aqi_emoji = "🟠"
-    elif aqi_us <= 200:
-        aqi_emoji = "🔴"
-    elif aqi_us <= 300:
-        aqi_emoji = "🟣"
-    else:
-        aqi_emoji = "🟤"
-
-    return f"\n{aqi_emoji} *AQI:* `{aqi_us}` ({aqi_data.get('city', 'N/A')}), Temp: `{aqi_data.get('temperature', 0)}°C`"
-
 
 def format_monitoring_message(
     session: requests.Session,
@@ -368,6 +370,5 @@ def format_monitoring_message(
             use_alert_labels=True,
             hide_zero=True,
         ),
-        _format_monitoring_aqi(session, config),
     ])
     return "\n\n".join(part for part in parts if part).strip()

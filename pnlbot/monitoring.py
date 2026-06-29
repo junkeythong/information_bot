@@ -101,11 +101,11 @@ def refresh_power_outages(session: requests.Session, config: EnvConfig, state: B
 def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> None:
     now = time.time()
     pnl, pnl_changed = portfolio.refresh_futures_pnl(session, config, state)
-    interval_changed = portfolio.apply_open_position_interval(state, pnl)
+    _, spot_changed = portfolio.refresh_spot_balance(session, config, state)
     snapshot = portfolio.PortfolioSnapshot(
         pnl=pnl,
         spot_balance=None,
-        state_changed=pnl_changed or interval_changed,
+        state_changed=pnl_changed or spot_changed,
     )
 
     if isinstance(snapshot.pnl, str):

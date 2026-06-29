@@ -177,13 +177,6 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         if INTERVAL_MIN_SECONDS <= interval_seconds <= INTERVAL_MAX_SECONDS:
             state.interval_seconds = interval_seconds
 
-    pre_open_position_interval = _safe_int(
-        state_data.get("pre_open_position_interval_seconds"),
-        0,
-    )
-    if INTERVAL_MIN_SECONDS <= pre_open_position_interval <= INTERVAL_MAX_SECONDS:
-        state.pre_open_position_interval_seconds = pre_open_position_interval
-
     if _has_override("night_mode_enabled"):
         state.night_mode_enabled = _safe_bool(state_data.get("night_mode_enabled"), state.night_mode_enabled)
     if _has_override("bot_running"):
@@ -201,6 +194,14 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
 
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
+    max_spot_assets = state_data.get("max_spot_assets")
+    if isinstance(max_spot_assets, list):
+        state.max_spot_assets = [item for item in max_spot_assets if isinstance(item, dict)]
+    min_spot_assets = state_data.get("min_spot_assets")
+    if isinstance(min_spot_assets, list):
+        state.min_spot_assets = [item for item in min_spot_assets if isinstance(item, dict)]
+    state.max_spot_observed_at = state_data.get("max_spot_observed_at", state.max_spot_observed_at)
+    state.min_spot_observed_at = state_data.get("min_spot_observed_at", state.min_spot_observed_at)
     if _has_override("init_capital"):
         init_capital = _safe_float(state_data.get("init_capital"), state.init_capital)
         state.init_capital = init_capital if init_capital and init_capital > 0 else None
@@ -285,8 +286,14 @@ def _preserve_existing_spot_range(path: str, state_data: dict) -> None:
 
     if existing_max > current_max:
         state_data["max_spot_balance"] = existing_max
+        for key in ("max_spot_assets", "max_spot_observed_at"):
+            if key in existing_state:
+                state_data[key] = existing_state[key]
     if existing_min > 0 and (current_min <= 0 or existing_min < current_min):
         state_data["min_spot_balance"] = existing_min
+        for key in ("min_spot_assets", "min_spot_observed_at"):
+            if key in existing_state:
+                state_data[key] = existing_state[key]
 
 
 def _preserve_existing_runtime_overrides(path: str, state_data: dict) -> None:
@@ -353,6 +360,10 @@ def persist_runtime_state(
         "pnl_alert_high": state.pnl_alert_high,
         "max_spot_balance": state.max_spot_balance,
         "min_spot_balance": state.min_spot_balance,
+        "max_spot_assets": state.max_spot_assets,
+        "min_spot_assets": state.min_spot_assets,
+        "max_spot_observed_at": state.max_spot_observed_at,
+        "min_spot_observed_at": state.min_spot_observed_at,
         "init_capital": state.init_capital,
         "outage_filter": state.outage_street_filter,
         "night_mode_window": list(state.night_mode_window),
@@ -363,7 +374,6 @@ def persist_runtime_state(
         "pinned_daily_message_id": state.pinned_daily_message_id,
         "freqtrade_ports": state.freqtrade_ports,
         "freqtrade_alert_cooldown_seconds": state.freqtrade_alert_cooldown_seconds,
-        "pre_open_position_interval_seconds": state.pre_open_position_interval_seconds,
         "futures_position_ranges": state.futures_position_ranges,
         "closed_position_ranges": state.closed_position_ranges,
         "runtime_config_overrides": state.runtime_config_overrides,
@@ -373,6 +383,10 @@ def persist_runtime_state(
         _preserve_existing_spot_range(path, state_data)
         state.max_spot_balance = _safe_persisted_float(state_data.get("max_spot_balance"), state.max_spot_balance)
         state.min_spot_balance = _safe_persisted_float(state_data.get("min_spot_balance"), state.min_spot_balance)
+        state.max_spot_assets = state_data.get("max_spot_assets", state.max_spot_assets)
+        state.min_spot_assets = state_data.get("min_spot_assets", state.min_spot_assets)
+        state.max_spot_observed_at = state_data.get("max_spot_observed_at", state.max_spot_observed_at)
+        state.min_spot_observed_at = state_data.get("min_spot_observed_at", state.min_spot_observed_at)
     _preserve_existing_runtime_overrides(path, state_data)
     payload = {
         "state": state_data,

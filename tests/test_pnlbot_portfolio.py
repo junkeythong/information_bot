@@ -29,17 +29,21 @@ class PortfolioSnapshotTests(unittest.TestCase):
             with patch.object(
                 portfolio,
                 "get_spot_balance",
-                return_value={"total": 90.0, "breakdown": []},
+                return_value={"total": 90.0, "breakdown": [{"asset": "ETH", "amount": 0.03, "price": 3000.0, "usdt_value": 90.0}]},
             ):
-                snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
+                with patch.object(portfolio, "_spot_observed_at", return_value="2026-06-29 12:00"):
+                    snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
 
         self.assertEqual(snapshot.pnl, 50.0)
         self.assertEqual(snapshot.spot_balance["total"], 90.0)
         self.assertTrue(snapshot.state_changed)
         self.assertEqual(state.max_spot_balance, 120.0)
         self.assertEqual(state.min_spot_balance, 90.0)
+        self.assertEqual(state.min_spot_assets[0]["asset"], "ETH")
+        self.assertEqual(state.min_spot_assets[0]["price"], 3000.0)
+        self.assertEqual(state.min_spot_observed_at, "2026-06-29 12:00")
 
-    def test_refresh_portfolio_snapshot_sets_fifteen_minute_interval_for_open_positions(self):
+    def test_refresh_portfolio_snapshot_keeps_configured_interval_with_open_positions(self):
         state = make_state(interval_seconds=3600)
         config = EnvConfig("key", "secret", "token", "chat")
         pnl = {
@@ -65,28 +69,7 @@ class PortfolioSnapshotTests(unittest.TestCase):
             ):
                 snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
 
-        self.assertEqual(state.interval_seconds, 15 * 60)
-        self.assertEqual(state.pre_open_position_interval_seconds, 3600)
-        self.assertTrue(snapshot.state_changed)
-
-    def test_refresh_portfolio_snapshot_restores_previous_interval_when_positions_close(self):
-        state = make_state(
-            interval_seconds=15 * 60,
-            pre_open_position_interval_seconds=1800,
-        )
-        config = EnvConfig("key", "secret", "token", "chat")
-        pnl = {"total": 0.0, "open_positions": [], "closed_trades": []}
-
-        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
-            with patch.object(
-                portfolio,
-                "get_spot_balance",
-                return_value={"total": 0.0, "breakdown": []},
-            ):
-                snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
-
-        self.assertEqual(state.interval_seconds, 1800)
-        self.assertIsNone(state.pre_open_position_interval_seconds)
+        self.assertEqual(state.interval_seconds, 3600)
         self.assertTrue(snapshot.state_changed)
 
     def test_refresh_portfolio_snapshot_keeps_interval_without_open_positions(self):
@@ -290,6 +273,10 @@ class PortfolioSnapshotTests(unittest.TestCase):
             init_capital=100.0,
             max_spot_balance=120.0,
             min_spot_balance=80.0,
+            max_spot_assets=[{"asset": "BTC", "amount": 0.0012, "price": 100000.0, "usdt_value": 120.0}],
+            min_spot_assets=[{"asset": "ETH", "amount": 0.02666667, "price": 3000.0, "usdt_value": 80.0}],
+            max_spot_observed_at="2026-06-29 12:00",
+            min_spot_observed_at="2026-06-28 12:00",
         )
         spot_balance = {
             "total": 110.0,
@@ -308,11 +295,13 @@ class PortfolioSnapshotTests(unittest.TestCase):
 
         self.assertIn("Spot", message)
         self.assertIn("+10.00%", message)
+        self.assertIn("`ETH`: `0.02666667` @ `3,000.0000` = `80.00 USDT`", message)
+        self.assertIn("2026-06-28 12:00", message)
         self.assertIn("BTC", message)
-        self.assertNotIn("ETH", message)
+        self.assertNotIn("\n• `ETH`:", message)
         self.assertIn("Asset Breakdown", message)
 
-    def test_format_monitoring_message_combines_spot_futures_and_aqi(self):
+    def test_format_monitoring_message_combines_spot_and_futures_without_aqi(self):
         state = make_state()
         config = EnvConfig("key", "secret", "token", "chat", iqair_api_key="iqair")
         snapshot = portfolio.PortfolioSnapshot(
@@ -321,16 +310,11 @@ class PortfolioSnapshotTests(unittest.TestCase):
             state_changed=False,
         )
 
-        with patch.object(
-            portfolio,
-            "get_air_quality",
-            return_value={"aqi_us": 85, "city": "Ho Chi Minh", "temperature": 28},
-        ):
-            message = portfolio.format_monitoring_message(None, config, state, snapshot)
+        message = portfolio.format_monitoring_message(None, config, state, snapshot)
 
         self.assertIn("Spot", message)
         self.assertIn("High profit", message)
-        self.assertIn("AQI", message)
+        self.assertNotIn("AQI", message)
 
     def test_format_futures_pnl_summary_includes_open_and_closed_trades(self):
         state = make_state()

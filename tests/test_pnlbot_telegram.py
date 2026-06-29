@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 
 import requests
@@ -54,6 +56,11 @@ class FakeUpdatesResponse:
         return {"ok": True, "result": self.updates}
 
 
+class FakeFailingPostSession:
+    def post(self, url, data, timeout):
+        raise RuntimeError(f"failed url={url}")
+
+
 class FakeCommandSession(FakeTelegramSession):
     def __init__(self, updates):
         super().__init__()
@@ -103,6 +110,26 @@ class TelegramMessageSplittingTests(unittest.TestCase):
         ]
         self.assertTrue(odd_backtick_posts)
         self.assertTrue(all("parse_mode" not in post["data"] for post in odd_backtick_posts))
+
+
+    def test_telegram_send_error_redacts_bot_token(self):
+        session = FakeFailingPostSession()
+        config = EnvConfig("key", "secret", "secret-token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        output = StringIO()
+
+        with redirect_stdout(output):
+            result = telegram.send_telegram_message(
+                session,
+                config,
+                settings,
+                "hello",
+                force_send=True,
+            )
+
+        self.assertIsNone(result)
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("/bot<redacted>/sendMessage", output.getvalue())
 
 
 class TelegramCommandPollingTests(unittest.TestCase):
@@ -334,7 +361,7 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertIn("`8123`: ✅ healthy", message)
 
 
-    def test_futures_command_sets_fifteen_minute_interval_for_open_positions(self):
+    def test_futures_command_keeps_configured_interval_for_open_positions(self):
         updates = [
             {
                 "update_id": 124,
@@ -352,19 +379,16 @@ class TelegramCommandPollingTests(unittest.TestCase):
         }
 
         with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
-            with patch.object(command_handlers, "persist_runtime_state") as persist_state:
-                commands.check_telegram_commands(
-                    session,
-                    config,
-                    settings,
-                    state,
-                    state.last_update_id,
-                    poll_timeout=30,
-                )
+            commands.check_telegram_commands(
+                session,
+                config,
+                settings,
+                state,
+                state.last_update_id,
+                poll_timeout=30,
+            )
 
-        self.assertEqual(state.interval_seconds, 15 * 60)
-        self.assertEqual(state.pre_open_position_interval_seconds, 3600)
-        persist_state.assert_called_once()
+        self.assertEqual(state.interval_seconds, 3600)
 
     def test_futures_with_extra_args_is_unknown_command(self):
         updates = [

@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from pnlbot import config_commands, http as http_client, monitoring, portfolio
+from pnlbot import config_commands, http as http_client, monitoring, portfolio, time_utils
 from pnlbot.config import load_bot_settings, load_env_config
 from pnlbot.logging import RotatingLogStream
 from pnlbot.models import BotSettings, BotState, EnvConfig
@@ -274,10 +274,14 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertIn("pnl_alert_high", persisted["runtime_config_overrides"])
         self.assertIn("freqtrade_ports", persisted["runtime_config_overrides"])
 
-    def test_persisted_open_position_interval_restore_state_round_trips(self):
+    def test_persisted_spot_range_metadata_round_trip(self):
         settings, state = make_settings_and_state()
-        state.interval_seconds = 15 * 60
-        state.pre_open_position_interval_seconds = 1800
+        state.max_spot_balance = 1200.0
+        state.min_spot_balance = 700.0
+        state.max_spot_assets = [{"asset": "BTC", "amount": 0.012, "price": 100000.0, "usdt_value": 1200.0}]
+        state.min_spot_assets = [{"asset": "ETH", "amount": 0.2, "price": 3500.0, "usdt_value": 700.0}]
+        state.max_spot_observed_at = "2026-06-29 12:00"
+        state.min_spot_observed_at = "2026-06-28 12:00"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "state.json"
@@ -287,7 +291,15 @@ class PersistedStateValidationTests(unittest.TestCase):
         restored_settings, restored_state = make_settings_and_state()
         apply_persisted_configuration(persisted, restored_state, restored_settings)
 
-        self.assertEqual(restored_state.pre_open_position_interval_seconds, 1800)
+        self.assertEqual(restored_state.max_spot_balance, 1200.0)
+        self.assertEqual(restored_state.min_spot_balance, 700.0)
+        self.assertEqual(restored_state.max_spot_assets[0]["asset"], "BTC")
+        self.assertEqual(restored_state.max_spot_assets[0]["price"], 100000.0)
+        self.assertEqual(restored_state.min_spot_assets[0]["asset"], "ETH")
+        self.assertEqual(restored_state.min_spot_assets[0]["price"], 3500.0)
+        self.assertEqual(restored_state.max_spot_observed_at, "2026-06-29 12:00")
+        self.assertEqual(restored_state.min_spot_observed_at, "2026-06-28 12:00")
+
 
     def test_persisted_position_ranges_round_trip(self):
         settings, state = make_settings_and_state()
@@ -334,11 +346,26 @@ class PersistedStateValidationTests(unittest.TestCase):
         settings, state = make_settings_and_state()
         state.max_spot_balance = 900.0
         state.min_spot_balance = 600.0
+        state.max_spot_assets = [{"asset": "BNB", "amount": 1.0, "price": 900.0, "usdt_value": 900.0}]
+        state.min_spot_assets = [{"asset": "SOL", "amount": 5.0, "price": 120.0, "usdt_value": 600.0}]
+        state.max_spot_observed_at = "current max"
+        state.min_spot_observed_at = "current min"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "state.json"
             state_path.write_text(
-                json.dumps({"state": {"max_spot_balance": 1200.0, "min_spot_balance": 400.0}}),
+                json.dumps(
+                    {
+                        "state": {
+                            "max_spot_balance": 1200.0,
+                            "min_spot_balance": 400.0,
+                            "max_spot_assets": [{"asset": "BTC", "amount": 0.012, "price": 100000.0, "usdt_value": 1200.0}],
+                            "min_spot_assets": [{"asset": "ETH", "amount": 0.1, "price": 4000.0, "usdt_value": 400.0}],
+                            "max_spot_observed_at": "existing max",
+                            "min_spot_observed_at": "existing min",
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
 
@@ -348,8 +375,16 @@ class PersistedStateValidationTests(unittest.TestCase):
 
         self.assertEqual(persisted["max_spot_balance"], 1200.0)
         self.assertEqual(persisted["min_spot_balance"], 400.0)
+        self.assertEqual(persisted["max_spot_assets"][0]["asset"], "BTC")
+        self.assertEqual(persisted["min_spot_assets"][0]["asset"], "ETH")
+        self.assertEqual(persisted["max_spot_observed_at"], "existing max")
+        self.assertEqual(persisted["min_spot_observed_at"], "existing min")
         self.assertEqual(state.max_spot_balance, 1200.0)
         self.assertEqual(state.min_spot_balance, 400.0)
+        self.assertEqual(state.max_spot_assets[0]["asset"], "BTC")
+        self.assertEqual(state.min_spot_assets[0]["asset"], "ETH")
+        self.assertEqual(state.max_spot_observed_at, "existing max")
+        self.assertEqual(state.min_spot_observed_at, "existing min")
 
     def test_persist_runtime_state_allows_explicit_spot_range_reset(self):
         settings, state = make_settings_and_state()
@@ -634,14 +669,21 @@ class FreqtradeMonitoringTests(unittest.TestCase):
 
         with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
             with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
-                with patch.object(monitoring.portfolio, "refresh_spot_balance") as refresh_spot:
-                    with patch.object(monitoring, "send_telegram_message") as send_message:
-                        monitoring.monitor_loop(None, config, settings, state)
+                with patch.object(
+                    monitoring.portfolio,
+                    "refresh_spot_balance",
+                    return_value=({"total": 90.0, "breakdown": [{"asset": "ETH", "amount": 0.03, "price": 3000.0, "usdt_value": 90.0}]}, True),
+                ) as refresh_spot:
+                    with patch.object(monitoring, "persist_runtime_state") as persist_state:
+                        with patch.object(monitoring, "send_telegram_message") as send_message:
+                            monitoring.monitor_loop(None, config, settings, state)
 
-        refresh_spot.assert_not_called()
+        refresh_spot.assert_called_once()
+        persist_state.assert_called_once()
 
         messages = [call.args[3] for call in send_message.call_args_list]
         self.assertTrue(any("exit: `roi`" in message for message in messages))
+        self.assertFalse(any("*Spot:*" in message for message in messages))
 
     def test_fast_health_alert_helper_sends_unhealthy_bot_alert_once_per_cooldown(self):
         settings, state = make_settings_and_state()
@@ -677,10 +719,11 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         state.last_outage_check = monitoring.time.time()
 
         with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(0.0, False)):
-            with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=0.0):
-                with patch.object(monitoring, "check_freqtrade_bots") as check_bots:
-                    with patch.object(monitoring, "send_telegram_message") as send_message:
-                        monitoring.monitor_loop(None, config, settings, state)
+            with patch.object(monitoring.portfolio, "refresh_spot_balance", return_value=({"total": 0.0, "breakdown": []}, False)):
+                with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=0.0):
+                    with patch.object(monitoring, "check_freqtrade_bots") as check_bots:
+                        with patch.object(monitoring, "send_telegram_message") as send_message:
+                            monitoring.monitor_loop(None, config, settings, state)
 
         check_bots.assert_not_called()
         self.assertFalse(
@@ -689,6 +732,20 @@ class FreqtradeMonitoringTests(unittest.TestCase):
 
 
 class DailyStatusSchedulingTests(unittest.TestCase):
+
+    def test_lunar_date_puts_holiday_name_before_date(self):
+        class FakeLunar:
+            day = 1
+            month = 1
+            leap = False
+            year = 2026
+
+        with patch.object(time_utils, "solar_to_lunar", return_value=FakeLunar()):
+            with patch.object(time_utils.holidays, "get_holiday", return_value="Tet"):
+                with patch.object(time_utils.can_chi, "get_year_can_chi", return_value="Binh Ngo"):
+                    message = time_utils.get_lunar_date_string("Asia/Ho_Chi_Minh")
+
+        self.assertEqual(message, "`Tet` - Mùng `1` Tháng `1` Năm `Binh Ngo`")
 
     def test_daily_spot_report_uses_separate_marker(self):
         settings, state = make_settings_and_state()

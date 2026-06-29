@@ -86,7 +86,7 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         applier=lambda value, state, settings: setattr(state, "is_running", value),
     ),
     "interval_seconds": ConfigDefinition(
-        description="Futures/AQI polling interval in seconds; open Futures positions switch polling to 15 minutes",
+        description="Futures polling interval in seconds",
         parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
         getter=lambda state, settings: state.interval_seconds,
         applier=lambda value, state, settings: setattr(state, "interval_seconds", value),

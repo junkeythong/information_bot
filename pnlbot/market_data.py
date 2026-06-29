@@ -262,7 +262,6 @@ def get_spot_balance(session: requests.Session, config: EnvConfig) -> Union[dict
         return {
             "total": round(total_usdt, 2),
             "breakdown": breakdown,
-            "btc_price": prices.get("BTCUSDT", 0.0)
         }
     except Exception as exc:
         return f"Spot balance fetch error: {exc}"

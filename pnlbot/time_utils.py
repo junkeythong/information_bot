@@ -40,8 +40,10 @@ def get_lunar_date_string(timezone_name: str) -> str:
             month_str += " (Nhuận)"
         year_can_chi = can_chi.get_year_can_chi(lunar.year)
         holiday = holidays.get_holiday(now.date(), lunar)
-        holiday_str = f" - `{holiday}`" if holiday else ""
-        return f"{day_str} {month_str} Năm `{year_can_chi}`{holiday_str}"
+        date_str = f"{day_str} {month_str} Năm `{year_can_chi}`"
+        if holiday:
+            return f"`{holiday}` - {date_str}"
+        return date_str
     except Exception as exc:
         return f"Error: {exc}"
 

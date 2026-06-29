@@ -274,6 +274,21 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertIn("pnl_alert_high", persisted["runtime_config_overrides"])
         self.assertIn("freqtrade_ports", persisted["runtime_config_overrides"])
 
+    def test_persisted_open_position_interval_restore_state_round_trips(self):
+        settings, state = make_settings_and_state()
+        state.interval_seconds = 15 * 60
+        state.pre_open_position_interval_seconds = 1800
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state.json"
+            persist_runtime_state(str(state_path), state, settings)
+            persisted = load_persisted_state(str(state_path))
+
+        restored_settings, restored_state = make_settings_and_state()
+        apply_persisted_configuration(persisted, restored_state, restored_settings)
+
+        self.assertEqual(restored_state.pre_open_position_interval_seconds, 1800)
+
     def test_persist_runtime_state_keeps_backup_of_previous_state(self):
         settings, state = make_settings_and_state()
         state.max_spot_balance = 1200.0

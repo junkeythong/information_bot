@@ -59,6 +59,7 @@ class BotState:
     freqtrade_ports: List[int] = field(default_factory=list)
     freqtrade_alert_cooldown_seconds: int = 300
     last_freqtrade_alert_time: float = 0.0
+    pre_open_position_interval_seconds: Optional[int] = None
     runtime_config_overrides: List[str] = field(default_factory=list)
 
 

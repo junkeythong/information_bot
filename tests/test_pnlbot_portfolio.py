@@ -43,6 +43,63 @@ class PortfolioSnapshotTests(unittest.TestCase):
         self.assertEqual(state.max_spot_balance, 120.0)
         self.assertEqual(state.min_spot_balance, 90.0)
 
+    def test_refresh_portfolio_snapshot_sets_fifteen_minute_interval_for_open_positions(self):
+        state = make_state(interval_seconds=3600)
+        config = EnvConfig("key", "secret", "token", "chat")
+        pnl = {
+            "total": 12.5,
+            "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 12.5}],
+            "closed_trades": [],
+        }
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(
+                portfolio,
+                "get_spot_balance",
+                return_value={"total": 0.0, "breakdown": []},
+            ):
+                snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
+
+        self.assertEqual(state.interval_seconds, 15 * 60)
+        self.assertEqual(state.pre_open_position_interval_seconds, 3600)
+        self.assertTrue(snapshot.state_changed)
+
+    def test_refresh_portfolio_snapshot_restores_previous_interval_when_positions_close(self):
+        state = make_state(
+            interval_seconds=15 * 60,
+            pre_open_position_interval_seconds=1800,
+        )
+        config = EnvConfig("key", "secret", "token", "chat")
+        pnl = {"total": 0.0, "open_positions": [], "closed_trades": []}
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(
+                portfolio,
+                "get_spot_balance",
+                return_value={"total": 0.0, "breakdown": []},
+            ):
+                snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
+
+        self.assertEqual(state.interval_seconds, 1800)
+        self.assertIsNone(state.pre_open_position_interval_seconds)
+        self.assertTrue(snapshot.state_changed)
+
+    def test_refresh_portfolio_snapshot_keeps_interval_without_open_positions(self):
+        state = make_state(interval_seconds=1800)
+        config = EnvConfig("key", "secret", "token", "chat")
+        pnl = {"total": 0.0, "open_positions": [], "closed_trades": []}
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(
+                portfolio,
+                "get_spot_balance",
+                return_value={"total": 0.0, "breakdown": []},
+            ):
+                snapshot = portfolio.refresh_portfolio_snapshot(None, config, state)
+
+        self.assertEqual(state.interval_seconds, 1800)
+        self.assertFalse(snapshot.state_changed)
+
     def test_format_spot_balance_summary_limits_breakdown_when_requested(self):
         state = make_state(
             init_capital=100.0,

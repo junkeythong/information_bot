@@ -177,6 +177,13 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         if INTERVAL_MIN_SECONDS <= interval_seconds <= INTERVAL_MAX_SECONDS:
             state.interval_seconds = interval_seconds
 
+    pre_open_position_interval = _safe_int(
+        state_data.get("pre_open_position_interval_seconds"),
+        0,
+    )
+    if INTERVAL_MIN_SECONDS <= pre_open_position_interval <= INTERVAL_MAX_SECONDS:
+        state.pre_open_position_interval_seconds = pre_open_position_interval
+
     if _has_override("night_mode_enabled"):
         state.night_mode_enabled = _safe_bool(state_data.get("night_mode_enabled"), state.night_mode_enabled)
     if _has_override("bot_running"):
@@ -319,6 +326,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "pinned_daily_message_id": state.pinned_daily_message_id,
         "freqtrade_ports": state.freqtrade_ports,
         "freqtrade_alert_cooldown_seconds": state.freqtrade_alert_cooldown_seconds,
+        "pre_open_position_interval_seconds": state.pre_open_position_interval_seconds,
         "runtime_config_overrides": state.runtime_config_overrides,
         "runtime_config_overrides_version": RUNTIME_CONFIG_OVERRIDES_VERSION,
     }

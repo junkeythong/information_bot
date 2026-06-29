@@ -3,6 +3,7 @@ from typing import Optional, Union
 
 import requests
 
+from .constants import FUTURES_OPEN_POSITION_INTERVAL_SECONDS
 from .market_data import get_air_quality, get_futures_pnl, get_spot_balance
 from .messages import format_closed_trade_line, get_pnl_icon
 from .models import BotState, EnvConfig
@@ -33,6 +34,29 @@ def get_futures_total(pnl: PnlResult) -> float:
     if isinstance(pnl, (int, float)):
         return float(pnl)
     return 0.0
+
+
+def apply_open_position_interval(state: BotState, pnl: PnlResult) -> bool:
+    has_open_positions = isinstance(pnl, dict) and bool(pnl.get("open_positions"))
+    if has_open_positions:
+        if state.interval_seconds == FUTURES_OPEN_POSITION_INTERVAL_SECONDS:
+            return False
+
+        if state.pre_open_position_interval_seconds is None:
+            state.pre_open_position_interval_seconds = state.interval_seconds
+        state.interval_seconds = FUTURES_OPEN_POSITION_INTERVAL_SECONDS
+        return True
+
+    if state.pre_open_position_interval_seconds is None:
+        return False
+
+    previous_interval = state.pre_open_position_interval_seconds
+    state.pre_open_position_interval_seconds = None
+    if state.interval_seconds == previous_interval:
+        return True
+
+    state.interval_seconds = previous_interval
+    return True
 
 
 def refresh_futures_pnl(
@@ -85,11 +109,12 @@ def refresh_portfolio_snapshot(
     state: BotState,
 ) -> PortfolioSnapshot:
     pnl, pnl_changed = refresh_futures_pnl(session, config, state)
+    interval_changed = apply_open_position_interval(state, pnl)
     spot_balance, spot_changed = refresh_spot_balance(session, config, state)
     return PortfolioSnapshot(
         pnl=pnl,
         spot_balance=spot_balance,
-        state_changed=pnl_changed or spot_changed,
+        state_changed=pnl_changed or spot_changed or interval_changed,
     )
 
 

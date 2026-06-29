@@ -44,6 +44,16 @@ def _recent_income_symbols(income_items: list, max_symbols: int = 10) -> list:
     return symbols
 
 
+def _closed_position_direction(position_side: str, order_side: str) -> str:
+    if position_side in {"LONG", "SHORT"}:
+        return position_side
+    if order_side == "SELL":
+        return "LONG"
+    if order_side == "BUY":
+        return "SHORT"
+    return "UNKNOWN"
+
+
 def _aggregate_closed_positions_from_trades(
     trades: list,
     limit: int = 3,
@@ -56,11 +66,14 @@ def _aggregate_closed_positions_from_trades(
         if realized_pnl == 0.0:
             continue
 
+        position_side = trade.get("positionSide", "BOTH")
+        order_side = trade.get("side", "UNKNOWN")
         realized_trades.append(
             {
                 "symbol": trade.get("symbol", "UNKNOWN"),
-                "position_side": trade.get("positionSide", "BOTH"),
-                "side": trade.get("side", "UNKNOWN"),
+                "position_side": position_side,
+                "side": _closed_position_direction(position_side, order_side),
+                "order_side": order_side,
                 "pnl": realized_pnl,
                 "time": _as_int(trade.get("time")),
             }
@@ -81,6 +94,8 @@ def _aggregate_closed_positions_from_trades(
         active_group = {
             "key": trade_key,
             "symbol": trade["symbol"],
+            "position_side": trade["position_side"],
+            "side": trade["side"],
             "pnl": trade["pnl"],
             "time": trade["time"],
             "oldest_time": trade["time"],
@@ -89,7 +104,13 @@ def _aggregate_closed_positions_from_trades(
         closed_positions.append(active_group)
 
     return [
-        {"symbol": item["symbol"], "pnl": round(item["pnl"], 2)}
+        {
+            "symbol": item["symbol"],
+            "position_side": item["position_side"],
+            "side": item["side"],
+            "pnl": round(item["pnl"], 2),
+            "time": item["time"],
+        }
         for item in closed_positions[:limit]
     ]
 
@@ -114,6 +135,24 @@ def _get_recent_closed_positions(
     return _aggregate_closed_positions_from_trades(trades, limit=limit)
 
 
+def _position_mark_price(position: dict, amount: float, unrealized_pnl: float) -> float:
+    mark_price = _as_float(position.get("markPrice"))
+    if mark_price > 0:
+        return mark_price
+
+    entry_price = _as_float(position.get("entryPrice"))
+    if entry_price > 0 and amount != 0.0:
+        return entry_price + unrealized_pnl / amount
+
+    return 0.0
+
+
+def _position_direction(position_side: str, amount: float) -> str:
+    if position_side in {"LONG", "SHORT"}:
+        return position_side
+    return "LONG" if amount > 0 else "SHORT"
+
+
 def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[dict, float, str]:
     timestamp = int(time.time() * 1000)
     query_string = f"timestamp={timestamp}"
@@ -125,17 +164,27 @@ def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[dict,
         response.raise_for_status()
         data = response.json()
         positions = data.get("positions", [])
-        total_unrealized_pnl = sum(float(position.get("unrealizedProfit", 0.0)) for position in positions)
+        total_unrealized_pnl = sum(_as_float(position.get("unrealizedProfit")) for position in positions)
 
         open_positions = []
         for position in positions:
-            position_amount = float(position.get("positionAmt", 0.0))
+            position_amount = _as_float(position.get("positionAmt"))
             if position_amount == 0.0:
                 continue
+
+            unrealized_pnl = _as_float(position.get("unrealizedProfit"))
+            entry_price = _as_float(position.get("entryPrice"))
+            mark_price = _position_mark_price(position, position_amount, unrealized_pnl)
+            position_side = position.get("positionSide", "BOTH")
             open_positions.append(
                 {
                     "symbol": position.get("symbol", "UNKNOWN"),
-                    "unrealized_pnl": round(float(position.get("unrealizedProfit", 0.0)), 2),
+                    "position_side": position_side,
+                    "side": _position_direction(position_side, position_amount),
+                    "amount": round(position_amount, 8),
+                    "entry_price": round(entry_price, 8) if entry_price > 0 else None,
+                    "mark_price": round(mark_price, 8) if mark_price > 0 else None,
+                    "unrealized_pnl": round(unrealized_pnl, 2),
                 }
             )
 

@@ -199,8 +199,6 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     elif _has_override("pnl_alert_high") and pnl_alert_high > state.pnl_alert_low:
         state.pnl_alert_high = pnl_alert_high
 
-    state.max_pnl = _safe_float(state_data.get("max_pnl"), state.max_pnl)
-    state.min_pnl = _safe_float(state_data.get("min_pnl"), state.min_pnl)
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
     if _has_override("init_capital"):
@@ -229,6 +227,12 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
             pass
 
     state.power_outages = state_data.get("power_outages", state.power_outages)
+    futures_position_ranges = state_data.get("futures_position_ranges")
+    if isinstance(futures_position_ranges, dict):
+        state.futures_position_ranges = futures_position_ranges
+    closed_position_ranges = state_data.get("closed_position_ranges")
+    if isinstance(closed_position_ranges, list):
+        state.closed_position_ranges = [item for item in closed_position_ranges if isinstance(item, dict)]
     state.last_outage_check = _safe_float(state_data.get("last_outage_check"), state.last_outage_check)
     if _has_override("freqtrade_ports"):
         raw_freqtrade_ports = state_data.get("freqtrade_ports")
@@ -313,8 +317,6 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "is_running": state.is_running,
         "pnl_alert_low": state.pnl_alert_low,
         "pnl_alert_high": state.pnl_alert_high,
-        "max_pnl": state.max_pnl,
-        "min_pnl": state.min_pnl,
         "max_spot_balance": state.max_spot_balance,
         "min_spot_balance": state.min_spot_balance,
         "init_capital": state.init_capital,
@@ -327,6 +329,8 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "freqtrade_ports": state.freqtrade_ports,
         "freqtrade_alert_cooldown_seconds": state.freqtrade_alert_cooldown_seconds,
         "pre_open_position_interval_seconds": state.pre_open_position_interval_seconds,
+        "futures_position_ranges": state.futures_position_ranges,
+        "closed_position_ranges": state.closed_position_ranges,
         "runtime_config_overrides": state.runtime_config_overrides,
         "runtime_config_overrides_version": RUNTIME_CONFIG_OVERRIDES_VERSION,
     }

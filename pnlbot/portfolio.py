@@ -5,9 +5,9 @@ import requests
 
 from .constants import FUTURES_OPEN_POSITION_INTERVAL_SECONDS
 from .market_data import get_air_quality, get_futures_pnl, get_spot_balance
-from .messages import format_closed_trade_line, get_pnl_icon
+from .messages import format_closed_trade_lines, format_open_position_lines, get_pnl_icon
 from .models import BotState, EnvConfig
-from .state import update_pnl_range, update_spot_balance_range
+from .state import update_spot_balance_range
 
 BalanceResult = Union[dict, float, str]
 PnlResult = Union[dict, float, str]
@@ -34,6 +34,126 @@ def get_futures_total(pnl: PnlResult) -> float:
     if isinstance(pnl, (int, float)):
         return float(pnl)
     return 0.0
+
+
+def _position_range_key(position: dict) -> str:
+    symbol = position.get("symbol", "UNKNOWN")
+    position_side = position.get("position_side", "BOTH")
+    side = position.get("side", "UNKNOWN")
+    return f"{symbol}:{position_side}:{side}"
+
+
+def _position_price(position: dict) -> Optional[float]:
+    price = position.get("mark_price") or position.get("entry_price")
+    if price is None:
+        return None
+    return float(price)
+
+
+def _archive_closed_position_range(state: BotState, key: str, position_range: dict) -> None:
+    archived_range = dict(position_range)
+    archived_range["key"] = key
+    state.closed_position_ranges.insert(0, archived_range)
+    state.closed_position_ranges = state.closed_position_ranges[:10]
+    print(
+        "Archived observed Futures range "
+        f"symbol={archived_range.get('symbol')} side={archived_range.get('side')} "
+        f"min={archived_range.get('min_pnl')}@{archived_range.get('min_price')} "
+        f"max={archived_range.get('max_pnl')}@{archived_range.get('max_price')}",
+        flush=True,
+    )
+
+
+def _closed_trade_matches_range(trade: dict, position_range: dict) -> bool:
+    if trade.get("symbol") != position_range.get("symbol"):
+        return False
+
+    for field in ("position_side", "side"):
+        trade_value = trade.get(field)
+        range_value = position_range.get(field)
+        if range_value and trade_value != range_value:
+            return False
+    return True
+
+
+def _attach_closed_position_ranges(state: BotState, pnl: PnlResult) -> bool:
+    if not isinstance(pnl, dict):
+        return False
+
+    closed_trades = pnl.get("closed_trades") or []
+    consumed_indexes = set()
+    attached = False
+    for trade in closed_trades:
+        for index, position_range in enumerate(state.closed_position_ranges):
+            if index in consumed_indexes or not _closed_trade_matches_range(trade, position_range):
+                continue
+            trade["pnl_range"] = dict(position_range)
+            consumed_indexes.add(index)
+            attached = True
+            print(
+                "Attached observed Futures range "
+                f"symbol={position_range.get('symbol')} side={position_range.get('side')} "
+                f"closed_pnl={trade.get('pnl')}",
+                flush=True,
+            )
+            break
+
+    if consumed_indexes:
+        state.closed_position_ranges = [
+            item for index, item in enumerate(state.closed_position_ranges)
+            if index not in consumed_indexes
+        ]
+    return attached
+
+
+def apply_position_pnl_ranges(state: BotState, pnl: PnlResult) -> bool:
+    if not isinstance(pnl, dict):
+        return False
+
+    open_positions = pnl.get("open_positions") or []
+
+    active_keys = set()
+    state_changed = False
+    for position in open_positions:
+        key = _position_range_key(position)
+        active_keys.add(key)
+        current_pnl = float(position.get("unrealized_pnl", 0.0))
+        current_price = _position_price(position)
+        position_range = state.futures_position_ranges.get(key)
+
+        if position_range is None:
+            position_range = {
+                "symbol": position.get("symbol", "UNKNOWN"),
+                "position_side": position.get("position_side", "BOTH"),
+                "side": position.get("side", "UNKNOWN"),
+                "entry_price": position.get("entry_price"),
+                "min_pnl": current_pnl,
+                "min_price": current_price,
+                "max_pnl": current_pnl,
+                "max_price": current_price,
+            }
+            state.futures_position_ranges[key] = position_range
+            state_changed = True
+        else:
+            if current_pnl < float(position_range.get("min_pnl", current_pnl)):
+                position_range["min_pnl"] = current_pnl
+                position_range["min_price"] = current_price
+                state_changed = True
+            if current_pnl > float(position_range.get("max_pnl", current_pnl)):
+                position_range["max_pnl"] = current_pnl
+                position_range["max_price"] = current_price
+                state_changed = True
+
+        position["pnl_range"] = dict(position_range)
+
+    stale_keys = set(state.futures_position_ranges) - active_keys
+    for key in stale_keys:
+        _archive_closed_position_range(state, key, state.futures_position_ranges[key])
+        del state.futures_position_ranges[key]
+        state_changed = True
+
+    state_changed = _attach_closed_position_ranges(state, pnl) or state_changed
+    return state_changed
 
 
 def apply_open_position_interval(state: BotState, pnl: PnlResult) -> bool:
@@ -63,20 +183,11 @@ def refresh_futures_pnl(
     session: requests.Session,
     config: EnvConfig,
     state: BotState,
-    *,
-    reset_range: bool = False,
 ) -> tuple[PnlResult, bool]:
     pnl = get_futures_pnl(session, config)
     state_changed = False
 
-    pnl_total = get_futures_total(pnl)
-    if isinstance(pnl, (dict, int, float)):
-        if reset_range:
-            state.max_pnl = pnl_total
-            state.min_pnl = pnl_total
-            state_changed = True
-
-        state_changed = update_pnl_range(state, pnl_total) or state_changed
+    state_changed = apply_position_pnl_ranges(state, pnl) or state_changed
 
     return pnl, state_changed
 
@@ -185,7 +296,6 @@ def format_futures_pnl_summary(
         icon = get_pnl_icon(pnl_total)
         lines = [f"💰 *Futures:* `{pnl_total:,.2f} USDT` {icon}"]
 
-    lines.append(f"📊 *Range:* `[{state.min_pnl:,.2f}, {state.max_pnl:,.2f}]`")
 
     if isinstance(pnl, dict):
         open_positions = pnl.get("open_positions", [])
@@ -195,10 +305,7 @@ def format_futures_pnl_summary(
         lines.append("*Open Positions:*")
         if open_positions:
             for position in open_positions:
-                unrealized_pnl = float(position.get("unrealized_pnl", 0.0))
-                lines.append(
-                    f"• `{position.get('symbol', 'UNKNOWN')}`: `{unrealized_pnl:,.2f} USDT` {get_pnl_icon(unrealized_pnl)}"
-                )
+                lines.extend(format_open_position_lines(position))
         else:
             lines.append("• None")
 
@@ -206,7 +313,7 @@ def format_futures_pnl_summary(
         lines.append("*Latest Closed Positions:*")
         if closed_trades:
             for trade in closed_trades[:3]:
-                lines.append(format_closed_trade_line(trade))
+                lines.extend(format_closed_trade_lines(trade))
         else:
             lines.append("• None")
 

@@ -36,6 +36,9 @@ class FuturesMarketDataTests(unittest.TestCase):
                             "symbol": "BTCUSDT",
                             "positionAmt": "0.01",
                             "unrealizedProfit": "12.345",
+                            "entryPrice": "62000",
+                            "markPrice": "63234.5",
+                            "positionSide": "BOTH",
                         },
                         {
                             "symbol": "ETHUSDT",
@@ -46,6 +49,8 @@ class FuturesMarketDataTests(unittest.TestCase):
                             "symbol": "SOLUSDT",
                             "positionAmt": "-2",
                             "unrealizedProfit": "-1.235",
+                            "entryPrice": "150.0",
+                            "positionSide": "BOTH",
                         },
                     ]
                 },
@@ -72,16 +77,32 @@ class FuturesMarketDataTests(unittest.TestCase):
         self.assertEqual(
             result["open_positions"],
             [
-                {"symbol": "BTCUSDT", "unrealized_pnl": 12.35},
-                {"symbol": "SOLUSDT", "unrealized_pnl": -1.24},
+                {
+                    "symbol": "BTCUSDT",
+                    "position_side": "BOTH",
+                    "side": "LONG",
+                    "amount": 0.01,
+                    "entry_price": 62000.0,
+                    "mark_price": 63234.5,
+                    "unrealized_pnl": 12.35,
+                },
+                {
+                    "symbol": "SOLUSDT",
+                    "position_side": "BOTH",
+                    "side": "SHORT",
+                    "amount": -2.0,
+                    "entry_price": 150.0,
+                    "mark_price": 150.6175,
+                    "unrealized_pnl": -1.24,
+                },
             ],
         )
         self.assertEqual(
             result["closed_trades"],
             [
-                {"symbol": "AERGOUSDT", "pnl": -0.12},
-                {"symbol": "AERGOUSDT", "pnl": 1.86},
-                {"symbol": "AERGOUSDT", "pnl": 1.77},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": -0.12, "time": 13000},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 1.86, "time": 7000},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 1.77, "time": 1001},
             ],
         )
         self.assertIn("/fapi/v2/account", session.urls[0])
@@ -115,8 +136,8 @@ class FuturesMarketDataTests(unittest.TestCase):
         self.assertEqual(
             result["closed_trades"],
             [
-                {"symbol": "AERGOUSDT", "pnl": 1.8},
-                {"symbol": "AERGOUSDT", "pnl": 1.25},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 1.8, "time": 10020},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 1.25, "time": 4000},
             ],
         )
 
@@ -146,8 +167,8 @@ class FuturesMarketDataTests(unittest.TestCase):
         self.assertEqual(
             result["closed_trades"],
             [
-                {"symbol": "AERGOUSDT", "pnl": 1.3},
-                {"symbol": "BTCUSDT", "pnl": 2.0},
+                {"symbol": "AERGOUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 1.3, "time": 10020},
+                {"symbol": "BTCUSDT", "position_side": "BOTH", "side": "SHORT", "pnl": 2.0, "time": 10015},
             ],
         )
 

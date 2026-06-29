@@ -11,10 +11,65 @@ def get_pnl_icon(val: float) -> str:
 
 
 def format_closed_trade_line(trade: dict, *, bullet: str = "•") -> str:
+    return format_closed_trade_lines(trade, bullet=bullet)[0]
+
+
+def format_closed_trade_lines(trade: dict, *, bullet: str = "•", detail_bullet: str = "  ▫️") -> list:
     trade_pnl = float(trade.get("pnl", 0.0))
     exit_reason = trade.get("exit_reason")
     reason_text = f" (exit: `{exit_reason}`)" if exit_reason else ""
-    return f"{bullet} `{trade.get('symbol', 'UNKNOWN')}`: `{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
+    lines = [
+        f"{bullet} `{trade.get('symbol', 'UNKNOWN')}`: "
+        f"`{trade_pnl:,.2f} USDT` {get_pnl_icon(trade_pnl)}{reason_text}"
+    ]
+
+    pnl_range = trade.get("pnl_range")
+    if isinstance(pnl_range, dict):
+        min_pnl = float(pnl_range.get("min_pnl", 0.0))
+        max_pnl = float(pnl_range.get("max_pnl", 0.0))
+        lines.append(
+            f"{detail_bullet} Observed Open Min: `{min_pnl:,.2f} USDT` {get_pnl_icon(min_pnl)} "
+            f"@ `{_format_position_price(pnl_range.get('min_price'))}`"
+        )
+        lines.append(
+            f"{detail_bullet} Observed Open Max: `{max_pnl:,.2f} USDT` {get_pnl_icon(max_pnl)} "
+            f"@ `{_format_position_price(pnl_range.get('max_price'))}`"
+        )
+
+    return lines
+
+
+def _format_position_price(price: object) -> str:
+    if price is None:
+        return "n/a"
+    return f"{float(price):,.8f}".rstrip("0").rstrip(".")
+
+
+def format_open_position_lines(position: dict, *, bullet: str = "•", detail_bullet: str = "  ▫️") -> list:
+    unrealized_pnl = float(position.get("unrealized_pnl", 0.0))
+    mark_price = position.get("mark_price")
+    price_text = f" @ `{_format_position_price(mark_price)}`" if mark_price is not None else ""
+    side = position.get("side") or position.get("position_side") or ""
+    side_text = f" {side}" if side else ""
+    lines = [
+        f"{bullet} `{position.get('symbol', 'UNKNOWN')}`{side_text}: "
+        f"`{unrealized_pnl:,.2f} USDT` {get_pnl_icon(unrealized_pnl)}{price_text}"
+    ]
+
+    pnl_range = position.get("pnl_range")
+    if isinstance(pnl_range, dict):
+        min_pnl = float(pnl_range.get("min_pnl", 0.0))
+        max_pnl = float(pnl_range.get("max_pnl", 0.0))
+        lines.append(
+            f"{detail_bullet} Observed Min: `{min_pnl:,.2f} USDT` {get_pnl_icon(min_pnl)} "
+            f"@ `{_format_position_price(pnl_range.get('min_price'))}`"
+        )
+        lines.append(
+            f"{detail_bullet} Observed Max: `{max_pnl:,.2f} USDT` {get_pnl_icon(max_pnl)} "
+            f"@ `{_format_position_price(pnl_range.get('max_price'))}`"
+        )
+
+    return lines
 
 
 def compose_status_message(
@@ -93,10 +148,6 @@ def compose_status_message(
             lines.append(f"• Current PnL: `{current_pnl:,.2f} USDT` {icon}")
         else:
             lines.append(f"• Current PnL: `{current_pnl}`")
-    lines.extend([
-        f"• Max PnL: `{state.max_pnl:,.2f} USDT`, Min: `{state.min_pnl:,.2f} USDT`",
-    ])
-
     if isinstance(current_pnl, dict):
         open_positions = current_pnl.get("open_positions", [])
         closed_trades = current_pnl.get("closed_trades", [])
@@ -104,17 +155,14 @@ def compose_status_message(
         lines.append("• Open Positions:")
         if open_positions:
             for position in open_positions:
-                unrealized_pnl = float(position.get("unrealized_pnl", 0.0))
-                lines.append(
-                    f"  ▫️ `{position.get('symbol', 'UNKNOWN')}`: `{unrealized_pnl:,.2f} USDT` {get_pnl_icon(unrealized_pnl)}"
-                )
+                lines.extend(format_open_position_lines(position, bullet="  ▫️", detail_bullet="    ▪️"))
         else:
             lines.append("  ▫️ None")
 
         lines.append("• Latest Closed Positions:")
         if closed_trades:
             for trade in closed_trades[:3]:
-                lines.append(format_closed_trade_line(trade, bullet="  ▫️"))
+                lines.extend(format_closed_trade_lines(trade, bullet="  ▫️", detail_bullet="    ▪️"))
         else:
             lines.append("  ▫️ None")
 

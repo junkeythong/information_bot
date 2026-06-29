@@ -1,14 +1,6 @@
 from .models import BotState
 
 
-def update_pnl_range(state: BotState, pnl: float) -> bool:
-    prev_max = state.max_pnl
-    prev_min = state.min_pnl
-    state.max_pnl = max(state.max_pnl, pnl)
-    state.min_pnl = min(state.min_pnl, pnl)
-    return state.max_pnl != prev_max or state.min_pnl != prev_min
-
-
 def update_spot_balance_range(state: BotState, total_spot: float) -> bool:
     if total_spot <= 0:
         return False

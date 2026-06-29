@@ -70,8 +70,6 @@ CONFIG_ORDER = [
     "night_mode_start_hour",
     "night_mode_end_hour",
     "init_capital",
-    "max_pnl",
-    "min_pnl",
     "max_spot_balance",
     "min_spot_balance",
     "outage_filter",
@@ -88,7 +86,7 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         applier=lambda value, state, settings: setattr(state, "is_running", value),
     ),
     "interval_seconds": ConfigDefinition(
-        description="PnL polling interval in seconds",
+        description="Base PnL polling interval in seconds; open Futures positions switch polling to 15 minutes",
         parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
         getter=lambda state, settings: state.interval_seconds,
         applier=lambda value, state, settings: setattr(state, "interval_seconds", value),
@@ -128,18 +126,6 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         parser=lambda raw, state, settings: parse_float_value(raw, minimum=0.0),
         getter=lambda state, settings: state.init_capital or 0.0,
         applier=lambda value, state, settings: setattr(state, "init_capital", value if value > 0 else None),
-    ),
-    "max_pnl": ConfigDefinition(
-        description="Historical maximum unrealized futures PnL",
-        parser=lambda raw, state, settings: parse_float_value(raw),
-        getter=lambda state, settings: state.max_pnl,
-        applier=lambda value, state, settings: setattr(state, "max_pnl", value),
-    ),
-    "min_pnl": ConfigDefinition(
-        description="Historical minimum unrealized futures PnL",
-        parser=lambda raw, state, settings: parse_float_value(raw),
-        getter=lambda state, settings: state.min_pnl,
-        applier=lambda value, state, settings: setattr(state, "min_pnl", value),
     ),
     "max_spot_balance": ConfigDefinition(
         description="Historical maximum total spot USDT balance",

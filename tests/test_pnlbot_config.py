@@ -289,6 +289,46 @@ class PersistedStateValidationTests(unittest.TestCase):
 
         self.assertEqual(restored_state.pre_open_position_interval_seconds, 1800)
 
+    def test_persisted_position_ranges_round_trip(self):
+        settings, state = make_settings_and_state()
+        state.futures_position_ranges = {
+            "BTCUSDT:BOTH:LONG": {
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "entry_price": 62000.0,
+                "min_pnl": -2.5,
+                "min_price": 61750.0,
+                "max_pnl": 5.0,
+                "max_price": 62500.0,
+            }
+        }
+        state.closed_position_ranges = [
+            {
+                "key": "ETHUSDT:BOTH:SHORT",
+                "symbol": "ETHUSDT",
+                "side": "SHORT",
+                "entry_price": 3500.0,
+                "min_pnl": -1.0,
+                "min_price": 3520.0,
+                "max_pnl": 3.5,
+                "max_price": 3450.0,
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state.json"
+            persist_runtime_state(str(state_path), state, settings)
+            persisted = load_persisted_state(str(state_path))
+
+        restored_settings, restored_state = make_settings_and_state()
+        apply_persisted_configuration(persisted, restored_state, restored_settings)
+
+        restored_range = restored_state.futures_position_ranges["BTCUSDT:BOTH:LONG"]
+        self.assertEqual(restored_range["min_price"], 61750.0)
+        self.assertEqual(restored_range["max_pnl"], 5.0)
+        self.assertEqual(restored_state.closed_position_ranges[0]["symbol"], "ETHUSDT")
+        self.assertEqual(restored_state.closed_position_ranges[0]["max_price"], 3450.0)
+
     def test_persist_runtime_state_keeps_backup_of_previous_state(self):
         settings, state = make_settings_and_state()
         state.max_spot_balance = 1200.0
@@ -528,23 +568,6 @@ class PowerOutageRefreshTests(unittest.TestCase):
         self.assertEqual(new_outages, [])
         self.assertEqual(state.last_outage_check, 1234.0)
 
-
-class PnlRangeTrackingTests(unittest.TestCase):
-    def test_monitor_loop_tracks_lower_positive_futures_pnl_after_reset(self):
-        settings, state = make_settings_and_state()
-        config = EnvConfig("key", "secret", "token", "chat")
-        state.max_pnl = 100.0
-        state.min_pnl = 100.0
-        state.last_outage_check = monitoring.time.time()
-
-        with patch.object(portfolio, "get_futures_pnl", return_value=50.0):
-            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                with patch.object(monitoring, "send_telegram_message"):
-                    with patch.object(monitoring, "persist_runtime_state"):
-                        monitoring.monitor_loop(None, config, settings, state)
-
-        self.assertEqual(state.max_pnl, 100.0)
-        self.assertEqual(state.min_pnl, 50.0)
 
 
 class FreqtradeMonitoringTests(unittest.TestCase):

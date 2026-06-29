@@ -6,6 +6,8 @@ air quality, and optional EVN power outage schedules.
 ## Features
 
 - Scheduled Telegram alerts for Futures PnL and Spot balance
+- Automatic 15-minute Futures polling after an open position is detected
+- Per-position observed min/max open PnL with mark price, carried into latest closed trades when observed
 - Portfolio status with `/status`, `/futures`, and `/spot`
 - Runtime configuration with `/config`
 - Optional AQI and EVN outage reporting
@@ -54,7 +56,7 @@ Common options:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `PNL_BOT_DEFAULT_INTERVAL_SECONDS` | Scheduled alert interval | `3600` |
+| `PNL_BOT_DEFAULT_INTERVAL_SECONDS` | Base scheduled alert interval; restored after open Futures positions close | `3600` |
 | `PNL_BOT_DEFAULT_PNL_ALERT_LOW` | Low PnL alert threshold | `-20` |
 | `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` | High PnL alert threshold | `20` |
 | `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` | Start with quiet hours enabled | `true` |
@@ -65,12 +67,21 @@ Common options:
 Values can also be inspected or changed from Telegram with `/config`.
 Runtime changes are persisted to the local state file.
 
+Runtime interval behavior:
+
+- `interval_seconds` is the base portfolio polling interval.
+- When a poll sees one or more open Futures positions, the bot stores the previous interval and switches to 15-minute polling.
+- When a later poll sees no open Futures positions, the bot restores the previous interval.
+- Telegram command polling is separate and remains responsive between portfolio polls.
+- Per-position min/max PnL and price are observed only at bot poll times, not tick-by-tick.
+- `pnl_alert_low` and `pnl_alert_high` still alert on current total unrealized Futures PnL.
+
 ## Telegram Commands
 
 | Command | Description |
 | --- | --- |
 | `/status` | Full bot and portfolio status |
-| `/futures` | Futures PnL, open positions, and latest closed positions |
+| `/futures` | Futures PnL, open positions with observed min/max, and latest closed positions |
 | `/spot` | Spot wallet summary |
 | `/aqi` | Air quality report, when configured |
 | `/outage` | EVN power outage schedule, when configured |
@@ -78,7 +89,6 @@ Runtime changes are persisted to the local state file.
 | `/config show` | Show runtime settings |
 | `/config set <key> <value>` | Update a runtime setting |
 | `/spot reset` | Reset Spot min/max history |
-| `/futures reset` | Reset Futures min/max history |
 | `/start` | Resume scheduled alerts |
 | `/stop` | Pause scheduled alerts |
 | `/help` | Show available commands |
@@ -104,13 +114,18 @@ Runtime changes are persisted to the local state file.
 
 💰 *Futures:*
 • Current PnL: `125.40 USDT` 🟢
-• Max PnL: `250.00 USDT`, Min: `-40.00 USDT`
 • Open Positions:
-  ▫️ `BTCUSDT`: `100.00 USDT` 🟢
-  ▫️ `ETHUSDT`: `25.40 USDT` 🟢
+  ▫️ `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`
+    ▪️ Observed Open Min: `-12.00 USDT` 🔴 @ `61,500`
+    ▪️ Observed Open Max: `100.00 USDT` 🟢 @ `63,000`
+  ▫️ `ETHUSDT` SHORT: `25.40 USDT` 🟢 @ `3,310`
+    ▪️ Observed Open Min: `-4.50 USDT` 🔴 @ `3,520`
+    ▪️ Observed Open Max: `25.40 USDT` 🟢 @ `3,310`
 • Latest Closed Positions:
-  ▫️ `SOLUSDT`: `8.50 USDT` 🟢
-  ▫️ `BNBUSDT`: `-3.10 USDT` 🔴
+  ▫️ `SOLUSDT`: `8.50 USDT` 🟢 (exit: `roi`)
+    ▪️ Observed Open Min: `-1.20 USDT` 🔴 @ `142.50`
+    ▪️ Observed Open Max: `10.30 USDT` 🟢 @ `149.25`
+  ▫️ `BNBUSDT`: `-3.10 USDT` 🔴 (exit: `stop_loss`)
   ▫️ `ADAUSDT`: `0.00 USDT` ⚪
 ```
 
@@ -129,15 +144,20 @@ Runtime changes are persisted to the local state file.
 
 ```text
 💰 *Futures:* `125.40 USDT` 🟢
-📊 *Range:* `[-40.00, 250.00]`
 
 *Open Positions:*
-• `BTCUSDT`: `100.00 USDT` 🟢
-• `ETHUSDT`: `25.40 USDT` 🟢
+• `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`
+  ▫️ Observed Min: `-12.00 USDT` 🔴 @ `61,500`
+  ▫️ Observed Max: `100.00 USDT` 🟢 @ `63,000`
+• `ETHUSDT` SHORT: `25.40 USDT` 🟢 @ `3,310`
+  ▫️ Observed Min: `-4.50 USDT` 🔴 @ `3,520`
+  ▫️ Observed Max: `25.40 USDT` 🟢 @ `3,310`
 
 *Latest Closed Positions:*
-• `SOLUSDT`: `8.50 USDT` 🟢
-• `BNBUSDT`: `-3.10 USDT` 🔴
+• `SOLUSDT`: `8.50 USDT` 🟢 (exit: `roi`)
+  ▫️ Observed Open Min: `-1.20 USDT` 🔴 @ `142.50`
+  ▫️ Observed Open Max: `10.30 USDT` 🟢 @ `149.25`
+• `BNBUSDT`: `-3.10 USDT` 🔴 (exit: `stop_loss`)
 • `ADAUSDT`: `0.00 USDT` ⚪
 ```
 
@@ -177,3 +197,5 @@ The bot writes local runtime data to:
 pnl-bot-state.json
 pnlbot.log
 ```
+
+The state file stores runtime overrides and observed Futures position range history. Delete or reset it only when you intentionally want to discard runtime state.

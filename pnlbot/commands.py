@@ -32,11 +32,11 @@ EXACT_COMMAND_HANDLERS: Dict[str, CommandHandler] = {
     "/sysinfo": handle_sysinfo_command,
     "/aqi": handle_aqi_command,
     "/help": handle_help_command,
+    "/futures": handle_futures_command,
 }
 
 PREFIX_COMMAND_HANDLERS: Dict[str, CommandHandler] = {
     "/config": handle_config_command_message,
-    "/futures": handle_futures_command,
     "/spot": handle_spot_command,
 }
 

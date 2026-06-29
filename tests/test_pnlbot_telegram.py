@@ -125,44 +125,6 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertFalse(state.telegram_command_polling_enabled)
         self.assertEqual(len(session.gets), 1)
 
-    def test_status_command_tracks_lower_positive_futures_pnl_after_reset(self):
-        updates = [
-            {
-                "update_id": 124,
-                "message": {"text": "/status", "chat": {"id": "chat"}},
-            }
-        ]
-        session = FakeCommandSession(updates)
-        config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(
-            3600,
-            True,
-            -20,
-            20,
-            (0, 5),
-            last_update_id=123,
-            max_pnl=100.0,
-            min_pnl=100.0,
-        )
-
-        with patch.object(portfolio, "get_futures_pnl", return_value=50.0):
-            with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                with patch.object(command_handlers, "persist_runtime_state") as persist_state:
-                    update_id = commands.check_telegram_commands(
-                        session,
-                        config,
-                        settings,
-                        state,
-                        state.last_update_id,
-                        poll_timeout=30,
-                    )
-
-        self.assertEqual(update_id, 124)
-        self.assertEqual(state.max_pnl, 100.0)
-        self.assertEqual(state.min_pnl, 50.0)
-        persist_state.assert_called_once()
-
     def test_status_command_includes_structured_futures_trade_details(self):
         updates = [
             {
@@ -180,8 +142,6 @@ class TelegramCommandPollingTests(unittest.TestCase):
             20,
             (0, 5),
             last_update_id=123,
-            max_pnl=50.0,
-            min_pnl=-10.0,
         )
         futures_payload = {
             "total": 12.5,
@@ -341,6 +301,63 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertIn("*Bots:*", message)
         self.assertIn("`8123`: ✅ healthy", message)
 
+
+    def test_futures_command_sets_fifteen_minute_interval_for_open_positions(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/futures", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        pnl = {
+            "total": 12.5,
+            "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 12.5}],
+            "closed_trades": [],
+        }
+
+        with patch.object(portfolio, "get_futures_pnl", return_value=pnl):
+            with patch.object(command_handlers, "persist_runtime_state") as persist_state:
+                commands.check_telegram_commands(
+                    session,
+                    config,
+                    settings,
+                    state,
+                    state.last_update_id,
+                    poll_timeout=30,
+                )
+
+        self.assertEqual(state.interval_seconds, 15 * 60)
+        self.assertEqual(state.pre_open_position_interval_seconds, 3600)
+        persist_state.assert_called_once()
+
+    def test_futures_with_extra_args_is_unknown_command(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/futures extra", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+
+        with patch.object(portfolio, "get_futures_pnl") as get_pnl:
+            commands.check_telegram_commands(
+                session,
+                config,
+                settings,
+                state,
+                state.last_update_id,
+                poll_timeout=30,
+            )
+
+        get_pnl.assert_not_called()
+        self.assertIn("Unsupported command", session.posts[0]["data"]["text"])
 
     def test_futures_command_enriches_closed_positions_with_freqtrade_exit_reason(self):
         updates = [

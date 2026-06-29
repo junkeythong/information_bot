@@ -115,10 +115,8 @@ def handle_futures_command(
     chat_id: str,
     text: str,
 ) -> None:
-    parts = text.split()
-    reset_mode = len(parts) > 1 and parts[1].strip().lower() == "reset"
-
-    pnl, state_changed = portfolio.refresh_futures_pnl(session, config, state, reset_range=reset_mode)
+    pnl, state_changed = portfolio.refresh_futures_pnl(session, config, state)
+    state_changed = portfolio.apply_open_position_interval(state, pnl) or state_changed
     pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, pnl)
     message = portfolio.format_futures_pnl_summary(state, pnl)
     if state.freqtrade_ports:
@@ -272,7 +270,7 @@ def handle_help_command(
         settings,
         "*ℹ️ Info commands:*\n"
         "• `/status` – Comprehensive snapshot (Futures, Spot, Config)\n"
-        "• `/futures` – Futures PnL, open positions, and latest closed positions\n"
+        "• `/futures` – Futures PnL, open positions with observed min/max, and latest closed positions\n"
         "• `/spot` – Quick spot balance check\n"
         "• `/aqi` – Air quality index (IQAir)\n"
         "• `/sysinfo` – System information\n"
@@ -282,8 +280,7 @@ def handle_help_command(
         "• `/config show` – View all runtime parameters\n"
         "• `/config set <key> <value>` – Update a parameter\n"
         "• `/start` / `/stop` – Resume or pause alerts\n"
-        "• `/spot reset` – reset clear min/max history for spot\n"
-        "• `/futures reset` – reset clear min/max history for futures",
+        "• `/spot reset` – reset clear min/max history for spot",
         chat_id=chat_id,
         state=state,
         force_send=True,

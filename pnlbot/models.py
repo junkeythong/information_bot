@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -43,8 +43,6 @@ class BotState:
     night_mode_window: Tuple[int, int]
     is_running: bool = True
     last_update_id: Optional[int] = None
-    max_pnl: float = 0.0
-    min_pnl: float = 0.0
     max_spot_balance: float = 0.0
     min_spot_balance: float = 0.0
     init_capital: Optional[float] = None
@@ -60,6 +58,8 @@ class BotState:
     freqtrade_alert_cooldown_seconds: int = 300
     last_freqtrade_alert_time: float = 0.0
     pre_open_position_interval_seconds: Optional[int] = None
+    futures_position_ranges: Dict[str, dict] = field(default_factory=dict)
+    closed_position_ranges: List[dict] = field(default_factory=list)
     runtime_config_overrides: List[str] = field(default_factory=list)
 
 

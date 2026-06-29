@@ -52,3 +52,11 @@ def should_send_daily_status(state: BotState, now: datetime.datetime) -> bool:
         and now.hour == 8
         and state.last_lunar_alert_date != now.strftime("%Y-%m-%d")
     )
+
+
+def should_send_daily_spot_report(state: BotState, now: datetime.datetime) -> bool:
+    return (
+        state.is_running
+        and now.hour == 8
+        and state.last_spot_report_date != now.strftime("%Y-%m-%d")
+    )

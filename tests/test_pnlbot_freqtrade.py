@@ -286,5 +286,43 @@ class FreqtradeExitReasonTests(unittest.TestCase):
         self.assertEqual(updated["closed_trades"][0]["exit_reason"], "roi")
 
 
+class FreqtradeDockerLogTests(unittest.TestCase):
+    def test_fetch_logs_requires_configured_port_when_multiple_ports_exist(self):
+        from pnlbot.freqtrade import fetch_freqtrade_container_logs
+
+        message = fetch_freqtrade_container_logs([8138, 8139])
+
+        self.assertIn("/freqtrade logs <port>", message)
+        self.assertIn("8138", message)
+        self.assertIn("8139", message)
+
+    def test_fetch_logs_rejects_unmonitored_port(self):
+        from pnlbot.freqtrade import fetch_freqtrade_container_logs
+
+        message = fetch_freqtrade_container_logs([8138], 8139)
+
+        self.assertIn("not monitored", message)
+
+    def test_fetch_logs_maps_port_to_container_and_reads_tail(self):
+        from pnlbot import freqtrade
+
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[:3] == ["docker", "ps", "--format"]:
+                return type("Result", (), {"stdout": "bot-a 127.0.0.1:8138->8138/tcp\n", "stderr": ""})()
+            if args[:3] == ["docker", "logs", "--tail"]:
+                return type("Result", (), {"stdout": "line 1\nline 2", "stderr": ""})()
+            raise AssertionError(args)
+
+        with unittest.mock.patch.object(freqtrade.subprocess, "run", side_effect=fake_run):
+            message = freqtrade.fetch_freqtrade_container_logs([8138], 8138)
+
+        self.assertEqual(calls[1], ["docker", "logs", "--tail", "100", "bot-a"])
+        self.assertIn("line 1", message)
+        self.assertIn("bot-a", message)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,7 @@ class BotState:
     power_outages: List[dict] = field(default_factory=list)
     last_outage_check: float = 0.0
     last_lunar_alert_date: Optional[str] = None
+    last_spot_report_date: Optional[str] = None
     pinned_daily_message_id: Optional[int] = None
     freqtrade_ports: List[int] = field(default_factory=list)
     freqtrade_alert_cooldown_seconds: int = 300

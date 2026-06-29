@@ -5,9 +5,11 @@ import requests
 from .command_handlers import (
     handle_aqi_command,
     handle_config_command_message,
+    handle_freqtrade_command,
     handle_futures_command,
     handle_help_command,
     handle_outage_command,
+    handle_restart_command,
     handle_spot_command,
     handle_start_command,
     handle_status_command,
@@ -28,6 +30,7 @@ EXACT_COMMAND_HANDLERS: Dict[str, CommandHandler] = {
     "/status": handle_status_command,
     "/stop": handle_stop_command,
     "/start": handle_start_command,
+    "/restart": handle_restart_command,
     "/outage": handle_outage_command,
     "/sysinfo": handle_sysinfo_command,
     "/aqi": handle_aqi_command,
@@ -37,6 +40,7 @@ EXACT_COMMAND_HANDLERS: Dict[str, CommandHandler] = {
 
 PREFIX_COMMAND_HANDLERS: Dict[str, CommandHandler] = {
     "/config": handle_config_command_message,
+    "/freqtrade": handle_freqtrade_command,
     "/spot": handle_spot_command,
 }
 

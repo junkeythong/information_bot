@@ -18,7 +18,7 @@ from pnlbot.persistence import (
     load_persisted_state,
     persist_runtime_state,
 )
-from pnlbot.time_utils import should_send_daily_status
+from pnlbot.time_utils import should_send_daily_spot_report, should_send_daily_status
 
 
 def make_settings_and_state():
@@ -329,6 +329,47 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertEqual(restored_state.closed_position_ranges[0]["symbol"], "ETHUSDT")
         self.assertEqual(restored_state.closed_position_ranges[0]["max_price"], 3450.0)
 
+
+    def test_persist_runtime_state_preserves_wider_existing_spot_range_by_default(self):
+        settings, state = make_settings_and_state()
+        state.max_spot_balance = 900.0
+        state.min_spot_balance = 600.0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state.json"
+            state_path.write_text(
+                json.dumps({"state": {"max_spot_balance": 1200.0, "min_spot_balance": 400.0}}),
+                encoding="utf-8",
+            )
+
+            persist_runtime_state(str(state_path), state, settings)
+
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))["state"]
+
+        self.assertEqual(persisted["max_spot_balance"], 1200.0)
+        self.assertEqual(persisted["min_spot_balance"], 400.0)
+        self.assertEqual(state.max_spot_balance, 1200.0)
+        self.assertEqual(state.min_spot_balance, 400.0)
+
+    def test_persist_runtime_state_allows_explicit_spot_range_reset(self):
+        settings, state = make_settings_and_state()
+        state.max_spot_balance = 900.0
+        state.min_spot_balance = 600.0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state.json"
+            state_path.write_text(
+                json.dumps({"state": {"max_spot_balance": 1200.0, "min_spot_balance": 400.0}}),
+                encoding="utf-8",
+            )
+
+            persist_runtime_state(str(state_path), state, settings, preserve_spot_range=False)
+
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))["state"]
+
+        self.assertEqual(persisted["max_spot_balance"], 900.0)
+        self.assertEqual(persisted["min_spot_balance"], 600.0)
+
     def test_persist_runtime_state_keeps_backup_of_previous_state(self):
         settings, state = make_settings_and_state()
         state.max_spot_balance = 1200.0
@@ -579,15 +620,11 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         state.pnl_alert_high = 10
         state.last_outage_check = monitoring.time.time()
 
-        snapshot = portfolio.PortfolioSnapshot(
-            pnl={
-                "total": 12.5,
-                "open_positions": [],
-                "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
-            },
-            spot_balance={"total": 0.0, "breakdown": []},
-            state_changed=False,
-        )
+        pnl = {
+            "total": 12.5,
+            "open_positions": [],
+            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
+        }
 
         enriched_pnl = {
             "total": 12.5,
@@ -595,10 +632,13 @@ class FreqtradeMonitoringTests(unittest.TestCase):
             "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"}],
         }
 
-        with patch.object(monitoring.portfolio, "refresh_portfolio_snapshot", return_value=snapshot):
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
             with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=enriched_pnl):
-                with patch.object(monitoring, "send_telegram_message") as send_message:
-                    monitoring.monitor_loop(None, config, settings, state)
+                with patch.object(monitoring.portfolio, "refresh_spot_balance") as refresh_spot:
+                    with patch.object(monitoring, "send_telegram_message") as send_message:
+                        monitoring.monitor_loop(None, config, settings, state)
+
+        refresh_spot.assert_not_called()
 
         messages = [call.args[3] for call in send_message.call_args_list]
         self.assertTrue(any("exit: `roi`" in message for message in messages))
@@ -636,13 +676,7 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         state.pnl_alert_high = 10
         state.last_outage_check = monitoring.time.time()
 
-        snapshot = portfolio.PortfolioSnapshot(
-            pnl=0.0,
-            spot_balance={"total": 0.0, "breakdown": []},
-            state_changed=False,
-        )
-
-        with patch.object(monitoring.portfolio, "refresh_portfolio_snapshot", return_value=snapshot):
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(0.0, False)):
             with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=0.0):
                 with patch.object(monitoring, "check_freqtrade_bots") as check_bots:
                     with patch.object(monitoring, "send_telegram_message") as send_message:
@@ -655,6 +689,16 @@ class FreqtradeMonitoringTests(unittest.TestCase):
 
 
 class DailyStatusSchedulingTests(unittest.TestCase):
+
+    def test_daily_spot_report_uses_separate_marker(self):
+        settings, state = make_settings_and_state()
+        state.last_lunar_alert_date = "2026-06-13"
+        now = datetime.datetime(2026, 6, 14, 8, 0, 0)
+
+        self.assertTrue(should_send_daily_spot_report(state, now))
+        state.last_spot_report_date = "2026-06-14"
+        self.assertFalse(should_send_daily_spot_report(state, now))
+
     def test_daily_status_is_not_due_when_bot_is_paused(self):
         settings, state = make_settings_and_state()
         state.is_running = False

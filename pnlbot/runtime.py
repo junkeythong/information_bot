@@ -21,8 +21,7 @@ from pnlbot.freqtrade import (
 )
 from pnlbot.http import create_retry_session
 from pnlbot.logging import configure_runtime_logging
-from pnlbot.market_data import get_spot_balance
-from pnlbot.messages import compose_status_message, get_pnl_icon
+from pnlbot.messages import compose_status_message
 from pnlbot.models import BotSettings, BotState, EnvConfig
 from pnlbot.monitoring import (
     monitor_loop,
@@ -42,7 +41,7 @@ from pnlbot.telegram import (
     send_telegram_message,
     unpin_telegram_message,
 )
-from pnlbot.time_utils import get_lunar_date_string, should_send_daily_status
+from pnlbot.time_utils import get_lunar_date_string, should_send_daily_spot_report, should_send_daily_status
 
 
 def compose_startup_status_message(
@@ -86,6 +85,70 @@ def init_last_update_id(
         else:
             print(f"Startup could not fetch update_id: {sanitize_telegram_error(exc, config)}", flush=True)
     return None
+
+
+def send_daily_lunar_pin(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+    now: datetime.datetime,
+) -> bool:
+    if not should_send_daily_status(state, now):
+        return False
+
+    lunar_str = get_lunar_date_string(config.timezone)
+    alert_msg = f"📅 *Hôm nay là:* `{lunar_str}`"
+
+    if state.pinned_daily_message_id:
+        unpin_telegram_message(session, config, state.pinned_daily_message_id)
+
+    resp = send_telegram_message(
+        session,
+        config,
+        settings,
+        alert_msg,
+        state=state,
+        force_send=True,
+    )
+
+    if resp and "result" in resp:
+        msg_id = resp["result"].get("message_id")
+        if msg_id:
+            pin_telegram_message(session, config, msg_id)
+            state.pinned_daily_message_id = msg_id
+
+    state.last_lunar_alert_date = now.strftime("%Y-%m-%d")
+    persist_runtime_state(STATE_FILE_PATH, state, settings)
+    return True
+
+
+def send_daily_spot_report(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+    now: datetime.datetime,
+) -> bool:
+    if not should_send_daily_spot_report(state, now):
+        return False
+
+    spot_balance, _ = portfolio.refresh_spot_balance(session, config, state)
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        portfolio.format_spot_balance_summary(
+            state,
+            spot_balance,
+            include_asset_heading=True,
+        ),
+        state=state,
+        force_send=True,
+    )
+    state.last_spot_report_date = now.strftime("%Y-%m-%d")
+    persist_runtime_state(STATE_FILE_PATH, state, settings)
+    return True
 
 
 def main() -> None:
@@ -229,58 +292,9 @@ def main() -> None:
                     force_send=True,
                 )
 
-            # 8:00 AM Daily Lunar Alert
-            if should_send_daily_status(state, tz_now):
-                lunar_str = get_lunar_date_string(config.timezone)
-                spot_balance = get_spot_balance(session, config)
-
-                msg_lines = [
-                    f"📅 *Hôm nay là:* `{lunar_str}`",
-                    "",
-                    "💰 *Spot:*",
-                ]
-
-                if isinstance(spot_balance, dict):
-                    total = spot_balance.get("total", 0.0)
-                    pnl_perc_line = ""
-                    if state.init_capital:
-                        pnl_perc = (total - state.init_capital) / state.init_capital * 100
-                        icon = get_pnl_icon(pnl_perc)
-                        pnl_perc_line = f" {icon} ({pnl_perc:+.2f}%)"
-                        max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
-                        min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
-                        max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT` ({max_perc:+.2f}%), Min: `{state.min_spot_balance:,.2f} USDT` ({min_perc:+.2f}%)"
-                    else:
-                        max_min_line = f"• Max: `{state.max_spot_balance:,.2f} USDT`, Min: `{state.min_spot_balance:,.2f} USDT`"
-
-                    msg_lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-                    msg_lines.append(max_min_line)
-                else:
-                    msg_lines.append(f"• {spot_balance}")
-
-                alert_msg = "\n".join(msg_lines)
-
-                # Unpin the previous daily status if exists
-                if state.pinned_daily_message_id:
-                    unpin_telegram_message(session, config, state.pinned_daily_message_id)
-
-                resp = send_telegram_message(
-                    session,
-                    config,
-                    settings,
-                    alert_msg,
-                    state=state,
-                    force_send=True,
-                )
-
-                if resp and "result" in resp:
-                    msg_id = resp["result"].get("message_id")
-                    if msg_id:
-                        pin_telegram_message(session, config, msg_id)
-                        state.pinned_daily_message_id = msg_id
-
-                state.last_lunar_alert_date = tz_now.strftime("%Y-%m-%d")
-                persist_runtime_state(STATE_FILE_PATH, state, settings)
+            # 8:00 AM daily lunar pin and Spot report
+            send_daily_lunar_pin(session, config, settings, state, tz_now)
+            send_daily_spot_report(session, config, settings, state, tz_now)
 
             now = time.time()
             if state.is_running and now - last_run >= state.interval_seconds:

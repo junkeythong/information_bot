@@ -16,7 +16,7 @@ PnlResult = Union[dict, float, str]
 @dataclass
 class PortfolioSnapshot:
     pnl: PnlResult
-    spot_balance: BalanceResult
+    spot_balance: Optional[BalanceResult] = None
     state_changed: bool = False
 
 
@@ -351,13 +351,17 @@ def format_monitoring_message(
     state: BotState,
     snapshot: PortfolioSnapshot,
 ) -> str:
-    parts = [
-        format_spot_balance_summary(
-            state,
-            snapshot.spot_balance,
-            max_breakdown_items=5,
-            hide_empty=True,
-        ),
+    parts = []
+    if snapshot.spot_balance is not None:
+        parts.append(
+            format_spot_balance_summary(
+                state,
+                snapshot.spot_balance,
+                max_breakdown_items=5,
+                hide_empty=True,
+            )
+        )
+    parts.extend([
         format_futures_pnl_summary(
             state,
             snapshot.pnl,
@@ -365,5 +369,5 @@ def format_monitoring_message(
             hide_zero=True,
         ),
         _format_monitoring_aqi(session, config),
-    ]
+    ])
     return "\n\n".join(part for part in parts if part).strip()

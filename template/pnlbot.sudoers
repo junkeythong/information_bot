@@ -1,0 +1,2 @@
+# Allow information_bot to restart only its own systemd service from Telegram.
+thonggia ALL=(root) NOPASSWD: /usr/bin/systemctl restart pnl.service

@@ -209,6 +209,7 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         if outage_filter is not None:
             state.outage_street_filter = outage_filter
     state.last_lunar_alert_date = state_data.get("last_lunar_alert_date", state.last_lunar_alert_date)
+    state.last_spot_report_date = state_data.get("last_spot_report_date", state.last_spot_report_date)
     state.pinned_daily_message_id = state_data.get("pinned_daily_message_id", state.pinned_daily_message_id)
 
     night_window = state_data.get("night_mode_window")
@@ -261,6 +262,33 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
             state.freqtrade_alert_cooldown_seconds = cooldown
 
 
+def _safe_persisted_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _preserve_existing_spot_range(path: str, state_data: dict) -> None:
+    if not os.path.exists(path):
+        return
+
+    try:
+        existing_state = _load_state_file(path).get("state", {})
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return
+
+    existing_max = _safe_persisted_float(existing_state.get("max_spot_balance"))
+    existing_min = _safe_persisted_float(existing_state.get("min_spot_balance"))
+    current_max = _safe_persisted_float(state_data.get("max_spot_balance"))
+    current_min = _safe_persisted_float(state_data.get("min_spot_balance"))
+
+    if existing_max > current_max:
+        state_data["max_spot_balance"] = existing_max
+    if existing_min > 0 and (current_min <= 0 or existing_min < current_min):
+        state_data["min_spot_balance"] = existing_min
+
+
 def _preserve_existing_runtime_overrides(path: str, state_data: dict) -> None:
     if not os.path.exists(path):
         return
@@ -310,7 +338,13 @@ def _preserve_existing_runtime_overrides(path: str, state_data: dict) -> None:
             current_override_set.add(key)
 
 
-def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> None:
+def persist_runtime_state(
+    path: str,
+    state: BotState,
+    settings: BotSettings,
+    *,
+    preserve_spot_range: bool = True,
+) -> None:
     state_data = {
         "interval_seconds": state.interval_seconds,
         "night_mode_enabled": state.night_mode_enabled,
@@ -325,6 +359,7 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "power_outages": state.power_outages,
         "last_outage_check": state.last_outage_check,
         "last_lunar_alert_date": state.last_lunar_alert_date,
+        "last_spot_report_date": state.last_spot_report_date,
         "pinned_daily_message_id": state.pinned_daily_message_id,
         "freqtrade_ports": state.freqtrade_ports,
         "freqtrade_alert_cooldown_seconds": state.freqtrade_alert_cooldown_seconds,
@@ -334,6 +369,10 @@ def persist_runtime_state(path: str, state: BotState, settings: BotSettings) -> 
         "runtime_config_overrides": state.runtime_config_overrides,
         "runtime_config_overrides_version": RUNTIME_CONFIG_OVERRIDES_VERSION,
     }
+    if preserve_spot_range:
+        _preserve_existing_spot_range(path, state_data)
+        state.max_spot_balance = _safe_persisted_float(state_data.get("max_spot_balance"), state.max_spot_balance)
+        state.min_spot_balance = _safe_persisted_float(state_data.get("min_spot_balance"), state.min_spot_balance)
     _preserve_existing_runtime_overrides(path, state_data)
     payload = {
         "state": state_data,

@@ -5,7 +5,7 @@ air quality, and optional EVN power outage schedules.
 
 ## Features
 
-- Scheduled Telegram alerts for Futures PnL and Spot balance
+- Scheduled Telegram alerts for Futures PnL and daily Spot balance
 - Automatic 15-minute Futures polling after an open position is detected
 - Per-position observed min/max open PnL with mark price, carried into latest closed trades when observed
 - Portfolio status with `/status`, `/futures`, and `/spot`
@@ -56,7 +56,7 @@ Common options:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `PNL_BOT_DEFAULT_INTERVAL_SECONDS` | Base scheduled alert interval; restored after open Futures positions close | `3600` |
+| `PNL_BOT_DEFAULT_INTERVAL_SECONDS` | Futures/AQI scheduled alert interval; restored after open Futures positions close | `3600` |
 | `PNL_BOT_DEFAULT_PNL_ALERT_LOW` | Low PnL alert threshold | `-20` |
 | `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` | High PnL alert threshold | `20` |
 | `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` | Start with quiet hours enabled | `true` |
@@ -69,11 +69,13 @@ Runtime changes are persisted to the local state file.
 
 Runtime interval behavior:
 
-- `interval_seconds` is the base portfolio polling interval.
+- `interval_seconds` is the Futures/AQI polling interval.
 - When a poll sees one or more open Futures positions, the bot stores the previous interval and switches to 15-minute polling.
 - When a later poll sees no open Futures positions, the bot restores the previous interval.
-- Telegram command polling is separate and remains responsive between portfolio polls.
+- Telegram command polling is separate and remains responsive between Futures/AQI polls.
 - Per-position min/max PnL and price are observed only at bot poll times, not tick-by-tick.
+- Spot is reported once daily at the daily 8:00 AM check and remains available on demand with `/spot` and `/status`.
+- The pinned daily message contains only the lunar date.
 - `pnl_alert_low` and `pnl_alert_high` still alert on current total unrealized Futures PnL.
 
 ## Telegram Commands
@@ -82,6 +84,7 @@ Runtime interval behavior:
 | --- | --- |
 | `/status` | Full bot and portfolio status |
 | `/futures` | Futures PnL, open positions with observed min/max, and latest closed positions |
+| `/freqtrade logs <port>` | Last 100 Docker log lines for a monitored Freqtrade bot |
 | `/spot` | Spot wallet summary |
 | `/aqi` | Air quality report, when configured |
 | `/outage` | EVN power outage schedule, when configured |
@@ -91,6 +94,7 @@ Runtime interval behavior:
 | `/spot reset` | Reset Spot min/max history |
 | `/start` | Resume scheduled alerts |
 | `/stop` | Pause scheduled alerts |
+| `/restart` | Restart `pnl.service` through systemd |
 | `/help` | Show available commands |
 
 ## Example Outputs
@@ -199,3 +203,12 @@ pnlbot.log
 ```
 
 The state file stores runtime overrides and observed Futures position range history. Delete or reset it only when you intentionally want to discard runtime state.
+
+To use `/restart`, install the narrow sudoers rule from `template/pnlbot.sudoers`:
+
+```bash
+sudo install -m 0440 template/pnlbot.sudoers /etc/sudoers.d/pnlbot
+sudo visudo -cf /etc/sudoers.d/pnlbot
+```
+
+The rule only allows `thonggia` to run `/usr/bin/systemctl restart pnl.service` without a password.

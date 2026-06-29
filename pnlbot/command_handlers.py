@@ -1,3 +1,5 @@
+import subprocess
+
 import requests
 
 from . import portfolio
@@ -6,7 +8,9 @@ from .constants import STATE_FILE_PATH
 from .freqtrade import (
     check_freqtrade_bots,
     enrich_pnl_with_freqtrade_exit_reasons,
+    fetch_freqtrade_container_logs,
     format_freqtrade_status_section,
+    parse_freqtrade_ports,
 )
 from .market_data import get_air_quality
 from .messages import compose_status_message
@@ -107,6 +111,54 @@ def handle_start_command(
     )
 
 
+def handle_restart_command(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+    chat_id: str,
+    _: str,
+) -> None:
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        "♻️ Restarting `pnl.service`...",
+        chat_id=chat_id,
+        state=state,
+        force_send=True,
+    )
+    try:
+        subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "restart", "pnl.service"],
+            check=True,
+            timeout=10,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        send_telegram_message(
+            session,
+            config,
+            settings,
+            f"❌ Could not restart `pnl.service`: `{detail}`",
+            chat_id=chat_id,
+            state=state,
+            force_send=True,
+        )
+    except Exception as exc:
+        send_telegram_message(
+            session,
+            config,
+            settings,
+            f"❌ Could not restart `pnl.service`: `{exc}`",
+            chat_id=chat_id,
+            state=state,
+            force_send=True,
+        )
+
+
 def handle_futures_command(
     session: requests.Session,
     config: EnvConfig,
@@ -136,6 +188,42 @@ def handle_futures_command(
         persist_runtime_state(STATE_FILE_PATH, state, settings)
 
 
+def handle_freqtrade_command(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+    chat_id: str,
+    text: str,
+) -> None:
+    parts = text.split()
+    if len(parts) < 2 or parts[1].lower() != "logs":
+        message = "❌ Usage: `/freqtrade logs <port>`"
+    else:
+        requested_port = None
+        if len(parts) >= 3:
+            try:
+                parsed_ports = parse_freqtrade_ports(parts[2])
+                requested_port = parsed_ports[0] if parsed_ports else None
+            except ValueError as exc:
+                message = f"❌ {exc}"
+            else:
+                message = fetch_freqtrade_container_logs(state.freqtrade_ports, requested_port)
+        else:
+            message = fetch_freqtrade_container_logs(state.freqtrade_ports)
+
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        message,
+        chat_id=chat_id,
+        state=state,
+        force_send=True,
+    )
+
+
+
 def handle_spot_command(
     session: requests.Session,
     config: EnvConfig,
@@ -149,7 +237,7 @@ def handle_spot_command(
 
     spot_balance, state_changed = portfolio.refresh_spot_balance(session, config, state, reset_range=reset_mode)
     if state_changed:
-        persist_runtime_state(STATE_FILE_PATH, state, settings)
+        persist_runtime_state(STATE_FILE_PATH, state, settings, preserve_spot_range=not reset_mode)
 
     send_telegram_message(
         session,
@@ -271,6 +359,7 @@ def handle_help_command(
         "*ℹ️ Info commands:*\n"
         "• `/status` – Comprehensive snapshot (Futures, Spot, Config)\n"
         "• `/futures` – Futures PnL, open positions with observed min/max, and latest closed positions\n"
+        "• `/freqtrade logs <port>` – show the last 100 Docker log lines for a monitored Freqtrade bot\n"
         "• `/spot` – Quick spot balance check\n"
         "• `/aqi` – Air quality index (IQAir)\n"
         "• `/sysinfo` – System information\n"
@@ -280,6 +369,7 @@ def handle_help_command(
         "• `/config show` – View all runtime parameters\n"
         "• `/config set <key> <value>` – Update a parameter\n"
         "• `/start` / `/stop` – Resume or pause alerts\n"
+        "• `/restart` – restart pnl.service\n"
         "• `/spot reset` – reset clear min/max history for spot",
         chat_id=chat_id,
         state=state,

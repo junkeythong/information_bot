@@ -100,7 +100,13 @@ def refresh_power_outages(session: requests.Session, config: EnvConfig, state: B
 
 def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> None:
     now = time.time()
-    snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
+    pnl, pnl_changed = portfolio.refresh_futures_pnl(session, config, state)
+    interval_changed = portfolio.apply_open_position_interval(state, pnl)
+    snapshot = portfolio.PortfolioSnapshot(
+        pnl=pnl,
+        spot_balance=None,
+        state_changed=pnl_changed or interval_changed,
+    )
 
     if isinstance(snapshot.pnl, str):
         send_telegram_message(session, config, settings, snapshot.pnl, state=state, force_send=True)

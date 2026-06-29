@@ -262,6 +262,38 @@ class TelegramCommandPollingTests(unittest.TestCase):
         self.assertIn("BTCUSDT", message)
         self.assertIn("exit: `roi`", message)
 
+
+    def test_restart_command_sends_notice_and_restarts_service(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/restart", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+
+        with patch.object(command_handlers.subprocess, "run") as restart_service:
+            commands.check_telegram_commands(
+                session,
+                config,
+                settings,
+                state,
+                state.last_update_id,
+                poll_timeout=30,
+            )
+
+        self.assertIn("Restarting", session.posts[0]["data"]["text"])
+        restart_service.assert_called_once_with(
+            ["sudo", "-n", "/usr/bin/systemctl", "restart", "pnl.service"],
+            check=True,
+            timeout=10,
+            capture_output=True,
+            text=True,
+        )
+
     def test_futures_command_includes_bot_health_when_ports_are_configured(self):
         updates = [
             {
@@ -409,6 +441,32 @@ class TelegramCommandPollingTests(unittest.TestCase):
         message = session.posts[0]["data"]["text"]
         self.assertIn("BTCUSDT", message)
         self.assertIn("exit: `roi`", message)
+
+
+    def test_freqtrade_logs_command_returns_container_logs_for_monitored_port(self):
+        updates = [
+            {
+                "update_id": 124,
+                "message": {"text": "/freqtrade logs 8138", "chat": {"id": "chat"}},
+            }
+        ]
+        session = FakeCommandSession(updates)
+        config = EnvConfig("key", "secret", "token", "chat")
+        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123, freqtrade_ports=[8138])
+
+        with patch.object(command_handlers, "fetch_freqtrade_container_logs", return_value="logs") as fetch_logs:
+            commands.check_telegram_commands(
+                session,
+                config,
+                settings,
+                state,
+                state.last_update_id,
+                poll_timeout=30,
+            )
+
+        fetch_logs.assert_called_once_with([8138], 8138)
+        self.assertEqual(session.posts[0]["data"]["text"], "logs")
 
     def test_spot_command_does_not_include_bot_health_when_ports_are_configured(self):
         updates = [

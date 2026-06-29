@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 import datetime
+import subprocess
 
 import requests
 
@@ -74,6 +75,78 @@ def _authenticated_get(
             response = session.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=timeout)
     response.raise_for_status()
     return response
+
+
+def _docker_port_matches(port_text: str, port: int) -> bool:
+    port_token = str(port)
+    return (
+        f":{port_token}->" in port_text
+        or f"->{port_token}/" in port_text
+        or f":{port_token}/" in port_text
+    )
+
+
+def _freqtrade_container_for_port(port: int, *, timeout: int = 5) -> Optional[str]:
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}} {{.Ports}}"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        name, ports = parts
+        if _docker_port_matches(ports, port):
+            return name
+    return None
+
+
+def fetch_freqtrade_container_logs(
+    ports: List[int],
+    requested_port: Optional[int] = None,
+    *,
+    lines: int = 100,
+    timeout: int = 10,
+) -> str:
+    if not ports:
+        return "⚠️ No Freqtrade ports configured. Use `/config set freqtrade_ports <port>` first."
+
+    if requested_port is None:
+        if len(ports) == 1:
+            requested_port = ports[0]
+        else:
+            choices = ", ".join(f"`{port}`" for port in ports)
+            return f"⚠️ Choose a Freqtrade port: `/freqtrade logs <port>`\nAvailable: {choices}"
+
+    if requested_port not in ports:
+        choices = ", ".join(str(port) for port in ports)
+        return f"⚠️ Port `{requested_port}` is not monitored. Configured ports: `{choices}`"
+
+    try:
+        container = _freqtrade_container_for_port(requested_port, timeout=timeout)
+        if not container:
+            return f"⚠️ No running Docker container found for Freqtrade port `{requested_port}`."
+
+        result = subprocess.run(
+            ["docker", "logs", "--tail", str(lines), container],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        )
+        output = (result.stdout + result.stderr).strip() or "No log output."
+        output = output.replace("`", "'")
+        max_log_chars = 3600
+        if len(output) > max_log_chars:
+            output = "... truncated to newest log output ...\n" + output[-max_log_chars:]
+        return f"📜 *Freqtrade logs* `{requested_port}` (`{container}`), last `{lines}` lines:\n```\n{output}\n```"
+    except subprocess.TimeoutExpired:
+        return f"⚠️ Timed out reading Docker logs for port `{requested_port}`."
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return f"⚠️ Could not read Docker logs for port `{requested_port}`: `{exc}`"
 
 
 def parse_freqtrade_ports(raw: Optional[object]) -> List[int]:

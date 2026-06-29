@@ -86,7 +86,7 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         applier=lambda value, state, settings: setattr(state, "is_running", value),
     ),
     "interval_seconds": ConfigDefinition(
-        description="Base PnL polling interval in seconds; open Futures positions switch polling to 15 minutes",
+        description="Futures/AQI polling interval in seconds; open Futures positions switch polling to 15 minutes",
         parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
         getter=lambda state, settings: state.interval_seconds,
         applier=lambda value, state, settings: setattr(state, "interval_seconds", value),
@@ -207,7 +207,12 @@ def handle_config_command(text: str, state: BotState, settings: BotSettings, con
                 state.runtime_config_overrides.append(key)
             if key == "outage_filter":
                 config.outage_street_filter = state.outage_street_filter
-            persist_runtime_state(STATE_FILE_PATH, state, settings)
+            persist_runtime_state(
+                STATE_FILE_PATH,
+                state,
+                settings,
+                preserve_spot_range=key not in {"max_spot_balance", "min_spot_balance"},
+            )
             if isinstance(result, str) and result:
                 extra = f"\n{result}"
             else:

@@ -6,8 +6,6 @@ from typing import Callable, Dict, List, Optional, Tuple
 @dataclass
 class BotSettings:
     default_interval_seconds: int
-    default_pnl_alert_low: int
-    default_pnl_alert_high: int
     default_night_mode_enabled: bool
     night_mode_window: Tuple[int, int]
     init_capital: Optional[float] = None
@@ -38,8 +36,6 @@ class EnvConfig:
 class BotState:
     interval_seconds: int
     night_mode_enabled: bool
-    pnl_alert_low: int
-    pnl_alert_high: int
     night_mode_window: Tuple[int, int]
     is_running: bool = True
     last_update_id: Optional[int] = None
@@ -64,6 +60,7 @@ class BotState:
     last_freqtrade_alert_time: float = 0.0
     futures_position_ranges: Dict[str, dict] = field(default_factory=dict)
     closed_position_ranges: List[dict] = field(default_factory=list)
+    seen_futures_closed_trade_keys: List[str] = field(default_factory=list)
     runtime_config_overrides: List[str] = field(default_factory=list)
 
 

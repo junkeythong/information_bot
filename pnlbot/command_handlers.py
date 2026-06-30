@@ -356,11 +356,11 @@ def handle_help_command(
         config,
         settings,
         "*ℹ️ Info commands:*\n"
-        "• `/status` – Comprehensive snapshot (Futures, Spot, Config)\n"
+        "• `/status` – Comprehensive snapshot (Futures and Spot)\n"
         "• `/futures` – Futures PnL, open positions with observed min/max, and latest closed positions\n"
         "• `/freqtrade logs <port>` – show the last 100 Docker log lines for a monitored Freqtrade bot\n"
         "• `/spot` – Quick spot balance check\n"
-        "• `/aqi` – Air quality index (IQAir)\n"
+        "• `/aqi` – Manual air quality index (IQAir)\n"
         "• `/sysinfo` – System information\n"
         "• `/outage` – View power outage schedule\n"
         "• `/help` – This reference\n"
@@ -369,7 +369,7 @@ def handle_help_command(
         "• `/config set <key> <value>` – Update a parameter\n"
         "• `/start` / `/stop` – Resume or pause alerts\n"
         "• `/restart` – restart pnl.service\n"
-        "• `/spot reset` – reset clear min/max history for spot",
+        "• `/spot reset` – Reset Spot min/max history",
         chat_id=chat_id,
         state=state,
         force_send=True,

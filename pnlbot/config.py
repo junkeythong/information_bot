@@ -46,25 +46,17 @@ def validate_interval_seconds(value: int, source: str) -> int:
     return value
 
 
-def validate_pnl_thresholds(low: int, high: int) -> None:
-    if low >= high:
-        raise RuntimeError("PNL alert low threshold must be lower than high threshold")
-
-
 def is_valid_night_mode_window(start_hour: int, end_hour: int) -> bool:
     return 0 <= start_hour <= 23 and 0 <= end_hour <= 24 and start_hour != end_hour
 
 
 def load_bot_settings() -> BotSettings:
     default_interval = env_int("PNL_BOT_DEFAULT_INTERVAL_SECONDS", 3600)
-    default_low = env_int("PNL_BOT_DEFAULT_PNL_ALERT_LOW", -20)
-    default_high = env_int("PNL_BOT_DEFAULT_PNL_ALERT_HIGH", 20)
     night_mode_start = env_int("PNL_BOT_NIGHT_MODE_START_HOUR", 0)
     night_mode_end = env_int("PNL_BOT_NIGHT_MODE_END_HOUR", 5)
     default_night_mode = env_bool("PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED", True)
     init_capital = env_float("PNL_BOT_INIT_CAPITAL", 0.0)
     validate_interval_seconds(default_interval, "PNL_BOT_DEFAULT_INTERVAL_SECONDS")
-    validate_pnl_thresholds(default_low, default_high)
     if not (0 <= night_mode_start <= 23 and 0 <= night_mode_end <= 24):
         raise RuntimeError("Night mode hours must be within 0-24 range")
     if night_mode_start == night_mode_end:
@@ -73,8 +65,6 @@ def load_bot_settings() -> BotSettings:
 
     return BotSettings(
         default_interval_seconds=default_interval,
-        default_pnl_alert_low=default_low,
-        default_pnl_alert_high=default_high,
         default_night_mode_enabled=default_night_mode,
         night_mode_window=night_mode_window,
         init_capital=(init_capital if init_capital > 0 else None),

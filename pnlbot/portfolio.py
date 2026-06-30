@@ -304,7 +304,6 @@ def format_futures_pnl_summary(
     state: BotState,
     pnl: PnlResult,
     *,
-    use_alert_labels: bool = False,
     hide_zero: bool = False,
 ) -> str:
     if not isinstance(pnl, (dict, int, float)):
@@ -314,14 +313,8 @@ def format_futures_pnl_summary(
     if hide_zero and pnl_total == 0.0:
         return ""
 
-    if use_alert_labels and pnl_total <= state.pnl_alert_low:
-        lines = [f"Heavy loss: 🔻 `{pnl_total:,.2f} USDT`"]
-    elif use_alert_labels and pnl_total >= state.pnl_alert_high:
-        lines = [f"High profit: 🟢 `{pnl_total:,.2f} USDT`"]
-    else:
-        icon = get_pnl_icon(pnl_total)
-        lines = [f"💰 *Futures:* `{pnl_total:,.2f} USDT` {icon}"]
-
+    icon = get_pnl_icon(pnl_total)
+    lines = [f"💰 *Futures:* `{pnl_total:,.2f} USDT` {icon}"]
 
     if isinstance(pnl, dict):
         open_positions = pnl.get("open_positions", [])
@@ -363,12 +356,12 @@ def format_monitoring_message(
                 hide_empty=True,
             )
         )
-    parts.extend([
-        format_futures_pnl_summary(
-            state,
-            snapshot.pnl,
-            use_alert_labels=True,
-            hide_zero=True,
-        ),
-    ])
+    if isinstance(snapshot.pnl, dict) and snapshot.pnl.get("open_positions"):
+        parts.append(
+            format_futures_pnl_summary(
+                state,
+                snapshot.pnl,
+                hide_zero=False,
+            )
+        )
     return "\n\n".join(part for part in parts if part).strip()

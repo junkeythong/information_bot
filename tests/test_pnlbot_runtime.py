@@ -7,7 +7,7 @@ from pnlbot.freqtrade import FreqtradeHealthResult
 from pnlbot.models import BotSettings, BotState, EnvConfig
 
 
-BotStateSettings = BotSettings(3600, -20, 20, True, (0, 5))
+BotStateSettings = BotSettings(3600, True, (0, 5))
 
 
 class StartupStatusMessageTests(unittest.TestCase):
@@ -16,8 +16,6 @@ class StartupStatusMessageTests(unittest.TestCase):
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             freqtrade_ports=[8136],
         )
@@ -55,7 +53,7 @@ class StartupStatusMessageTests(unittest.TestCase):
 class DailyRuntimeMessageTests(unittest.TestCase):
     def test_daily_lunar_pin_contains_only_lunar_date(self):
         config = EnvConfig("key", "secret", "token", "chat")
-        state = BotState(3600, True, -20, 20, (0, 5))
+        state = BotState(3600, True, (0, 5))
         now = datetime.datetime(2026, 6, 14, 8, 0, 0)
 
         with patch.object(runtime, "get_lunar_date_string", return_value="Mùng `1` Tháng `5`"):
@@ -74,7 +72,7 @@ class DailyRuntimeMessageTests(unittest.TestCase):
     def test_daily_spot_report_sends_once_per_day(self):
         config = EnvConfig("key", "secret", "token", "chat")
         settings = BotStateSettings
-        state = BotState(3600, True, -20, 20, (0, 5))
+        state = BotState(3600, True, (0, 5))
         now = datetime.datetime(2026, 6, 14, 8, 0, 0)
 
         with patch.object(runtime.portfolio, "refresh_spot_balance", return_value=({"total": 100.0, "breakdown": []}, True)) as refresh_spot:

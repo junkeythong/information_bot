@@ -13,20 +13,6 @@ from .models import BotSettings, BotState, ConfigDefinition, EnvConfig
 from .persistence import apply_persisted_configuration, load_persisted_state, persist_runtime_state
 
 
-def _parse_pnl_low(raw: str, state: BotState, _: BotSettings) -> int:
-    value = parse_int_value(raw)
-    if value >= state.pnl_alert_high:
-        raise ValueError("Lower bound must be less than current upper bound")
-    return value
-
-
-def _parse_pnl_high(raw: str, state: BotState, _: BotSettings) -> int:
-    value = parse_int_value(raw)
-    if value <= state.pnl_alert_low:
-        raise ValueError("Upper bound must be greater than current lower bound")
-    return value
-
-
 def _parse_night_mode_start(raw: str, state: BotState, _: BotSettings) -> int:
     value = parse_int_value(raw, minimum=0, maximum=23)
     if value == state.night_mode_window[1]:
@@ -64,8 +50,6 @@ def _apply_bool(attribute: str) -> Callable[[bool, BotState, BotSettings], None]
 CONFIG_ORDER = [
     "bot_running",
     "interval_seconds",
-    "pnl_alert_low",
-    "pnl_alert_high",
     "night_mode_enabled",
     "night_mode_start_hour",
     "night_mode_end_hour",
@@ -90,18 +74,6 @@ CONFIG_DEFINITIONS: Dict[str, ConfigDefinition] = {
         parser=lambda raw, state, settings: parse_int_value(raw, minimum=10, maximum=86400),
         getter=lambda state, settings: state.interval_seconds,
         applier=lambda value, state, settings: setattr(state, "interval_seconds", value),
-    ),
-    "pnl_alert_low": ConfigDefinition(
-        description="Lower unrealized PnL alert threshold",
-        parser=_parse_pnl_low,
-        getter=lambda state, settings: state.pnl_alert_low,
-        applier=lambda value, state, settings: setattr(state, "pnl_alert_low", value),
-    ),
-    "pnl_alert_high": ConfigDefinition(
-        description="Upper unrealized PnL alert threshold",
-        parser=_parse_pnl_high,
-        getter=lambda state, settings: state.pnl_alert_high,
-        applier=lambda value, state, settings: setattr(state, "pnl_alert_high", value),
     ),
     "night_mode_enabled": ConfigDefinition(
         description="Toggle quiet hours",

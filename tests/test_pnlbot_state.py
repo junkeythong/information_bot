@@ -8,8 +8,6 @@ def make_state(**overrides):
     values = {
         "interval_seconds": 3600,
         "night_mode_enabled": True,
-        "pnl_alert_low": -20,
-        "pnl_alert_high": 20,
         "night_mode_window": (0, 5),
     }
     values.update(overrides)

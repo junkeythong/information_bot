@@ -112,13 +112,6 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         if "is_running" in state_data and _safe_bool(state_data.get("is_running"), state.is_running) != state.is_running:
             _append_override(inferred, "bot_running")
 
-        pnl_alert_low = _safe_int(state_data.get("pnl_alert_low"), state.pnl_alert_low)
-        pnl_alert_high = _safe_int(state_data.get("pnl_alert_high"), state.pnl_alert_high)
-        if "pnl_alert_low" in state_data and pnl_alert_low != state.pnl_alert_low:
-            _append_override(inferred, "pnl_alert_low")
-        if "pnl_alert_high" in state_data and pnl_alert_high != state.pnl_alert_high:
-            _append_override(inferred, "pnl_alert_high")
-
         if "init_capital" in state_data:
             init_capital = _safe_float(state_data.get("init_capital"), state.init_capital or 0.0)
             normalized_init_capital = init_capital if init_capital and init_capital > 0 else None
@@ -182,16 +175,6 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     if _has_override("bot_running"):
         state.is_running = _safe_bool(state_data.get("is_running"), state.is_running)
 
-    pnl_alert_low = _safe_int(state_data.get("pnl_alert_low"), state.pnl_alert_low)
-    pnl_alert_high = _safe_int(state_data.get("pnl_alert_high"), state.pnl_alert_high)
-    if _has_override("pnl_alert_low") and _has_override("pnl_alert_high") and pnl_alert_low < pnl_alert_high:
-        state.pnl_alert_low = pnl_alert_low
-        state.pnl_alert_high = pnl_alert_high
-    elif _has_override("pnl_alert_low") and pnl_alert_low < state.pnl_alert_high:
-        state.pnl_alert_low = pnl_alert_low
-    elif _has_override("pnl_alert_high") and pnl_alert_high > state.pnl_alert_low:
-        state.pnl_alert_high = pnl_alert_high
-
     state.max_spot_balance = _safe_float(state_data.get("max_spot_balance"), state.max_spot_balance)
     state.min_spot_balance = _safe_float(state_data.get("min_spot_balance"), state.min_spot_balance)
     max_spot_assets = state_data.get("max_spot_assets")
@@ -235,6 +218,11 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
     closed_position_ranges = state_data.get("closed_position_ranges")
     if isinstance(closed_position_ranges, list):
         state.closed_position_ranges = [item for item in closed_position_ranges if isinstance(item, dict)]
+    seen_closed_trade_keys = state_data.get("seen_futures_closed_trade_keys")
+    if isinstance(seen_closed_trade_keys, list):
+        state.seen_futures_closed_trade_keys = [
+            item for item in seen_closed_trade_keys if isinstance(item, str)
+        ][:50]
     state.last_outage_check = _safe_float(state_data.get("last_outage_check"), state.last_outage_check)
     if _has_override("freqtrade_ports"):
         raw_freqtrade_ports = state_data.get("freqtrade_ports")
@@ -318,8 +306,6 @@ def _preserve_existing_runtime_overrides(path: str, state_data: dict) -> None:
     override_fields = {
         "bot_running": ("is_running",),
         "interval_seconds": ("interval_seconds",),
-        "pnl_alert_low": ("pnl_alert_low",),
-        "pnl_alert_high": ("pnl_alert_high",),
         "night_mode_enabled": ("night_mode_enabled",),
         "night_mode_start_hour": ("night_mode_window",),
         "night_mode_end_hour": ("night_mode_window",),
@@ -356,8 +342,6 @@ def persist_runtime_state(
         "interval_seconds": state.interval_seconds,
         "night_mode_enabled": state.night_mode_enabled,
         "is_running": state.is_running,
-        "pnl_alert_low": state.pnl_alert_low,
-        "pnl_alert_high": state.pnl_alert_high,
         "max_spot_balance": state.max_spot_balance,
         "min_spot_balance": state.min_spot_balance,
         "max_spot_assets": state.max_spot_assets,
@@ -376,6 +360,7 @@ def persist_runtime_state(
         "freqtrade_alert_cooldown_seconds": state.freqtrade_alert_cooldown_seconds,
         "futures_position_ranges": state.futures_position_ranges,
         "closed_position_ranges": state.closed_position_ranges,
+        "seen_futures_closed_trade_keys": state.seen_futures_closed_trade_keys,
         "runtime_config_overrides": state.runtime_config_overrides,
         "runtime_config_overrides_version": RUNTIME_CONFIG_OVERRIDES_VERSION,
     }

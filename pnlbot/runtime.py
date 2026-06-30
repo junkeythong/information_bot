@@ -170,8 +170,6 @@ def main() -> None:
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
         night_mode_enabled=settings.default_night_mode_enabled,
-        pnl_alert_low=settings.default_pnl_alert_low,
-        pnl_alert_high=settings.default_pnl_alert_high,
         night_mode_window=settings.night_mode_window,
         init_capital=settings.init_capital,
         outage_street_filter=config.outage_street_filter,

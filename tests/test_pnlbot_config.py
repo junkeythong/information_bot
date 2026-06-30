@@ -24,16 +24,12 @@ from pnlbot.time_utils import should_send_daily_spot_report, should_send_daily_s
 def make_settings_and_state():
     settings = BotSettings(
         default_interval_seconds=3600,
-        default_pnl_alert_low=-20,
-        default_pnl_alert_high=20,
         default_night_mode_enabled=True,
         night_mode_window=(0, 5),
     )
     state = BotState(
         interval_seconds=settings.default_interval_seconds,
         night_mode_enabled=settings.default_night_mode_enabled,
-        pnl_alert_low=settings.default_pnl_alert_low,
-        pnl_alert_high=settings.default_pnl_alert_high,
         night_mode_window=settings.night_mode_window,
     )
     return settings, state
@@ -44,16 +40,6 @@ class BotSettingsValidationTests(unittest.TestCase):
         with patch.dict(os.environ, {"PNL_BOT_DEFAULT_INTERVAL_SECONDS": "-1"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "PNL_BOT_DEFAULT_INTERVAL_SECONDS"):
                 load_bot_settings()
-
-    def test_rejects_default_pnl_thresholds_that_cross(self):
-        env = {
-            "PNL_BOT_DEFAULT_PNL_ALERT_LOW": "20",
-            "PNL_BOT_DEFAULT_PNL_ALERT_HIGH": "20",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "lower than high"):
-                load_bot_settings()
-
 
 class RequestsSessionTests(unittest.TestCase):
     def test_retry_session_falls_back_to_system_ca_when_certifi_path_is_missing(self):
@@ -106,12 +92,10 @@ class PersistedStateValidationTests(unittest.TestCase):
 
 
     def test_versioned_auto_state_without_runtime_overrides_keeps_env_defaults(self):
-        settings = BotSettings(3600, -20, 20, True, (0, 5), init_capital=5000.0)
+        settings = BotSettings(3600, True, (0, 5), init_capital=5000.0)
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             init_capital=settings.init_capital,
         )
@@ -135,12 +119,10 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertEqual(state.freqtrade_alert_cooldown_seconds, 300)
 
     def test_legacy_unversioned_state_migrates_runtime_config_values(self):
-        settings = BotSettings(3600, -20, 20, True, (0, 5), init_capital=5000.0)
+        settings = BotSettings(3600, True, (0, 5), init_capital=5000.0)
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             init_capital=settings.init_capital,
         )
@@ -172,12 +154,10 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertIn("freqtrade_alert_cooldown_seconds", state.runtime_config_overrides)
 
     def test_versioned_empty_override_state_with_ports_recovers_legacy_runtime_values(self):
-        settings = BotSettings(3600, -20, 20, True, (0, 5), init_capital=5000.0)
+        settings = BotSettings(3600, True, (0, 5), init_capital=5000.0)
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             init_capital=settings.init_capital,
         )
@@ -201,12 +181,10 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertIn("freqtrade_ports", state.runtime_config_overrides)
 
     def test_persisted_runtime_overrides_replace_env_defaults(self):
-        settings = BotSettings(3600, -20, 20, True, (0, 5), init_capital=5000.0)
+        settings = BotSettings(3600, True, (0, 5), init_capital=5000.0)
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             init_capital=settings.init_capital,
             freqtrade_ports=[9000],
@@ -246,14 +224,10 @@ class PersistedStateValidationTests(unittest.TestCase):
                         "state": {
                             "runtime_config_overrides": [
                                 "interval_seconds",
-                                "pnl_alert_low",
-                                "pnl_alert_high",
                                 "freqtrade_ports",
                             ],
                             "runtime_config_overrides_version": 1,
                             "interval_seconds": 1800,
-                            "pnl_alert_low": -10,
-                            "pnl_alert_high": 30,
                             "freqtrade_ports": [8136, 8138, 8139],
                         }
                     }
@@ -266,12 +240,8 @@ class PersistedStateValidationTests(unittest.TestCase):
             persisted = json.loads(state_path.read_text(encoding="utf-8"))["state"]
 
         self.assertEqual(persisted["interval_seconds"], 1800)
-        self.assertEqual(persisted["pnl_alert_low"], -10)
-        self.assertEqual(persisted["pnl_alert_high"], 30)
         self.assertEqual(persisted["freqtrade_ports"], [8123])
         self.assertIn("interval_seconds", persisted["runtime_config_overrides"])
-        self.assertIn("pnl_alert_low", persisted["runtime_config_overrides"])
-        self.assertIn("pnl_alert_high", persisted["runtime_config_overrides"])
         self.assertIn("freqtrade_ports", persisted["runtime_config_overrides"])
 
     def test_persisted_spot_range_metadata_round_trip(self):
@@ -326,6 +296,7 @@ class PersistedStateValidationTests(unittest.TestCase):
                 "max_price": 3450.0,
             }
         ]
+        state.seen_futures_closed_trade_keys = ["BTCUSDT:BOTH:LONG:1000:5.00000000"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "state.json"
@@ -340,6 +311,10 @@ class PersistedStateValidationTests(unittest.TestCase):
         self.assertEqual(restored_range["max_pnl"], 5.0)
         self.assertEqual(restored_state.closed_position_ranges[0]["symbol"], "ETHUSDT")
         self.assertEqual(restored_state.closed_position_ranges[0]["max_price"], 3450.0)
+        self.assertEqual(
+            restored_state.seen_futures_closed_trade_keys,
+            ["BTCUSDT:BOTH:LONG:1000:5.00000000"],
+        )
 
 
     def test_persist_runtime_state_preserves_wider_existing_spot_range_by_default(self):
@@ -647,24 +622,32 @@ class PowerOutageRefreshTests(unittest.TestCase):
 
 
 class FreqtradeMonitoringTests(unittest.TestCase):
-    def test_monitor_loop_enriches_closed_positions_with_freqtrade_exit_reason(self):
+    def test_monitor_loop_alerts_new_closed_position_with_freqtrade_exit_reason(self):
         settings, state = make_settings_and_state()
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
         state.freqtrade_ports = [8123]
-        state.pnl_alert_low = -10
-        state.pnl_alert_high = 10
         state.last_outage_check = monitoring.time.time()
+        state.seen_futures_closed_trade_keys = ["ETHUSDT:BOTH:SHORT:900:1.00000000"]
 
         pnl = {
             "total": 12.5,
             "open_positions": [],
-            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5}],
+            "closed_trades": [{"symbol": "BTCUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 12.5, "time": 1000}],
         }
 
         enriched_pnl = {
             "total": 12.5,
             "open_positions": [],
-            "closed_trades": [{"symbol": "BTCUSDT", "pnl": 12.5, "exit_reason": "roi"}],
+            "closed_trades": [
+                {
+                    "symbol": "BTCUSDT",
+                    "position_side": "BOTH",
+                    "side": "LONG",
+                    "pnl": 12.5,
+                    "time": 1000,
+                    "exit_reason": "roi",
+                }
+            ],
         }
 
         with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
@@ -682,8 +665,86 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         persist_state.assert_called_once()
 
         messages = [call.args[3] for call in send_message.call_args_list]
+        self.assertTrue(any("Futures trade closed" in message for message in messages))
         self.assertTrue(any("exit: `roi`" in message for message in messages))
         self.assertFalse(any("*Spot:*" in message for message in messages))
+
+    def test_monitor_loop_baselines_existing_closed_trade_without_alert_on_first_poll(self):
+        settings, state = make_settings_and_state()
+        config = EnvConfig("key", "secret", "token", "chat")
+        state.last_outage_check = monitoring.time.time()
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [
+                {"symbol": "BTCUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 3.25, "time": 1000}
+            ],
+        }
+
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
+            with patch.object(monitoring.portfolio, "refresh_spot_balance", return_value=({"total": 0.0, "breakdown": []}, False)):
+                with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=pnl):
+                    with patch.object(monitoring, "persist_runtime_state") as persist_state:
+                        with patch.object(monitoring, "send_telegram_message") as send_message:
+                            monitoring.monitor_loop(None, config, settings, state)
+
+        send_message.assert_not_called()
+        persist_state.assert_called_once()
+        self.assertEqual(
+            state.seen_futures_closed_trade_keys,
+            ["BTCUSDT:BOTH:LONG:1000:3.25000000"],
+        )
+
+    def test_monitor_loop_sends_alert_for_new_closed_trade_once(self):
+        settings, state = make_settings_and_state()
+        config = EnvConfig("key", "secret", "token", "chat")
+        state.last_outage_check = monitoring.time.time()
+        state.seen_futures_closed_trade_keys = ["ETHUSDT:BOTH:SHORT:900:1.00000000"]
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [
+                {"symbol": "BTCUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 3.25, "time": 1000}
+            ],
+        }
+
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
+            with patch.object(monitoring.portfolio, "refresh_spot_balance", return_value=({"total": 0.0, "breakdown": []}, False)):
+                with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=pnl):
+                    with patch.object(monitoring, "persist_runtime_state") as persist_state:
+                        with patch.object(monitoring, "send_telegram_message") as send_message:
+                            monitoring.monitor_loop(None, config, settings, state)
+
+        persist_state.assert_called_once()
+        self.assertEqual(send_message.call_count, 1)
+        alert = send_message.call_args.args[3]
+        self.assertIn("Futures trade closed", alert)
+        self.assertIn("BTCUSDT", alert)
+        self.assertIn("3.25 USDT", alert)
+        self.assertEqual(state.seen_futures_closed_trade_keys[0], "BTCUSDT:BOTH:LONG:1000:3.25000000")
+
+    def test_monitor_loop_does_not_repeat_seen_closed_trade(self):
+        settings, state = make_settings_and_state()
+        config = EnvConfig("key", "secret", "token", "chat")
+        state.last_outage_check = monitoring.time.time()
+        state.seen_futures_closed_trade_keys = ["BTCUSDT:BOTH:LONG:1000:3.25000000"]
+        pnl = {
+            "total": 0.0,
+            "open_positions": [],
+            "closed_trades": [
+                {"symbol": "BTCUSDT", "position_side": "BOTH", "side": "LONG", "pnl": 3.25, "time": 1000}
+            ],
+        }
+
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
+            with patch.object(monitoring.portfolio, "refresh_spot_balance", return_value=({"total": 0.0, "breakdown": []}, False)):
+                with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=pnl):
+                    with patch.object(monitoring, "persist_runtime_state") as persist_state:
+                        with patch.object(monitoring, "send_telegram_message") as send_message:
+                            monitoring.monitor_loop(None, config, settings, state)
+
+        send_message.assert_not_called()
+        persist_state.assert_not_called()
 
     def test_fast_health_alert_helper_sends_unhealthy_bot_alert_once_per_cooldown(self):
         settings, state = make_settings_and_state()
@@ -714,8 +775,6 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         settings, state = make_settings_and_state()
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
         state.freqtrade_ports = [8123]
-        state.pnl_alert_low = -10
-        state.pnl_alert_high = 10
         state.last_outage_check = monitoring.time.time()
 
         with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(0.0, False)):

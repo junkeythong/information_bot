@@ -5,7 +5,8 @@ air quality, and optional EVN power outage schedules.
 
 ## Features
 
-- Scheduled Telegram alerts for Futures PnL and daily Spot balance
+- Scheduled Telegram alerts for open Futures positions and daily Spot balance
+- One-time monitor alerts when a newly closed Futures trade appears
 - Per-position observed min/max open PnL with mark price, carried into latest closed trades when observed
 - Portfolio status with `/status`, `/futures`, and `/spot`
 - Runtime configuration with `/config`
@@ -56,8 +57,6 @@ Common options:
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `PNL_BOT_DEFAULT_INTERVAL_SECONDS` | Futures scheduled alert interval | `3600` |
-| `PNL_BOT_DEFAULT_PNL_ALERT_LOW` | Low PnL alert threshold | `-20` |
-| `PNL_BOT_DEFAULT_PNL_ALERT_HIGH` | High PnL alert threshold | `20` |
 | `PNL_BOT_DEFAULT_NIGHT_MODE_ENABLED` | Start with quiet hours enabled | `true` |
 | `PNL_BOT_INIT_CAPITAL` | Spot PnL baseline | `0` |
 | `IQAIR_API_KEY` | Enable manual `/aqi` reporting | unset |
@@ -74,7 +73,8 @@ Runtime interval behavior:
 - Spot is reported once daily at the daily 8:00 AM check, remains available on demand with `/spot` and `/status`, and silently keeps min/max balance history during the Futures loop.
 - Spot min/max history includes an asset price snapshot and local observation time at each min/max point.
 - The pinned daily message contains only the lunar date; holiday names appear before the lunar date.
-- `pnl_alert_low` and `pnl_alert_high` still alert on current total unrealized Futures PnL.
+- The Futures loop sends when open positions are detected.
+- Newly closed Futures trades are deduped in the state file and sent once when first observed by the monitor loop.
 
 ## Telegram Commands
 
@@ -110,9 +110,13 @@ Runtime interval behavior:
 💰 *Spot:*
 • Init Capital: `5,000.00 USDT`
 • Total: `5,420.50 USDT` 🟢 (+8.41%)
-• Max: `5,600.00 USDT` (+12.00%), Min: `5,200.00 USDT` (+4.00%)
-  ▫️ `BTC`: `3,200.00 USDT` @ 98,500.2500
-  ▫️ `ETH`: `1,500.00 USDT` @ 2,650.1000
+• Range:
+  • Min: `5,200.00 USDT` (2026-06-28 12:00) (+4.00%)
+    ▫️ `BTC`: `0.03248731` @ `98,500.2500` = `3,200.00 USDT`
+    ▫️ `ETH`: `0.56601636` @ `2,650.1000` = `1,500.00 USDT`
+  • Max: `5,600.00 USDT` (2026-06-29 12:00) (+12.00%)
+    ▫️ `BTC`: `0.03500000` @ `100,000.0000` = `3,500.00 USDT`
+    ▫️ `ETH`: `0.77777778` @ `2,700.0000` = `2,100.00 USDT`
 
 💰 *Futures:*
 • Current PnL: `125.40 USDT` 🟢
@@ -135,7 +139,13 @@ Runtime interval behavior:
 
 ```text
 💰 *Spot:* `5,420.50 USDT` 🟢 (+8.41%)
-📊 *Range:* `[5,200.00, 5,600.00]`
+📊 *Range:*
+• Min: `5,200.00 USDT` (2026-06-28 12:00)
+  ▫️ `BTC`: `0.03248731` @ `98,500.2500` = `3,200.00 USDT`
+  ▫️ `ETH`: `0.56601636` @ `2,650.1000` = `1,500.00 USDT`
+• Max: `5,600.00 USDT` (2026-06-29 12:00)
+  ▫️ `BTC`: `0.03500000` @ `100,000.0000` = `3,500.00 USDT`
+  ▫️ `ETH`: `0.77777778` @ `2,700.0000` = `2,100.00 USDT`
 
 *Asset Breakdown:*
 • `BTC`: `3,200.00 USDT` @ 98,500.2500
@@ -200,7 +210,7 @@ pnl-bot-state.json
 pnlbot.log
 ```
 
-The state file stores runtime overrides and observed Futures position range history. Delete or reset it only when you intentionally want to discard runtime state.
+The state file stores runtime overrides, Spot min/max snapshots, observed Futures position ranges, and closed-trade dedupe keys. Delete or reset it only when you intentionally want to discard runtime state.
 
 To use `/restart`, install the narrow sudoers rule from `template/pnlbot.sudoers`:
 

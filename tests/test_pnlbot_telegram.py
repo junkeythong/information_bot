@@ -76,7 +76,7 @@ class TelegramMessageSplittingTests(unittest.TestCase):
     def test_long_markdown_message_splits_on_lines_before_raw_chunks(self):
         session = FakeTelegramSession()
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         message = f"`{'a' * 30}`\n`{'b' * 30}`"
 
         with patch.object(telegram, "TELEGRAM_MAX_MESSAGE", 50):
@@ -89,7 +89,7 @@ class TelegramMessageSplittingTests(unittest.TestCase):
     def test_short_message_still_posts_once(self):
         session = FakeTelegramSession()
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
 
         telegram.send_telegram_message(session, config, settings, "`hello`", force_send=True)
 
@@ -99,7 +99,7 @@ class TelegramMessageSplittingTests(unittest.TestCase):
     def test_oversized_single_line_chunks_with_unbalanced_markdown_disable_parse_mode(self):
         session = FakeTelegramSession()
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         message = f"`{'a' * 80}`"
 
         with patch.object(telegram, "TELEGRAM_MAX_MESSAGE", 40):
@@ -115,7 +115,7 @@ class TelegramMessageSplittingTests(unittest.TestCase):
     def test_telegram_send_error_redacts_bot_token(self):
         session = FakeFailingPostSession()
         config = EnvConfig("key", "secret", "secret-token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         output = StringIO()
 
         with redirect_stdout(output):
@@ -136,8 +136,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
     def test_polling_conflict_disables_command_polling(self):
         session = FakeConflictPollingSession()
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        settings = BotSettings(3600, True, (0, 5))
+        state = BotState(3600, True, (0, 5), last_update_id=123)
 
         update_id = commands.check_telegram_commands(
             session,
@@ -161,12 +161,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
         )
@@ -205,12 +203,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
             freqtrade_ports=[8123, 8214],
@@ -250,12 +246,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
             freqtrade_ports=[8123],
@@ -299,8 +293,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        settings = BotSettings(3600, True, (0, 5))
+        state = BotState(3600, True, (0, 5), last_update_id=123)
 
         with patch.object(command_handlers.subprocess, "run") as restart_service:
             commands.check_telegram_commands(
@@ -330,12 +324,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
             freqtrade_ports=[8123],
@@ -370,8 +362,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        settings = BotSettings(3600, True, (0, 5))
+        state = BotState(3600, True, (0, 5), last_update_id=123)
         pnl = {
             "total": 12.5,
             "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 12.5}],
@@ -399,8 +391,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123)
+        settings = BotSettings(3600, True, (0, 5))
+        state = BotState(3600, True, (0, 5), last_update_id=123)
 
         with patch.object(portfolio, "get_futures_pnl") as get_pnl:
             commands.check_telegram_commands(
@@ -424,12 +416,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_username="user", freqtrade_api_password="pass")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
             freqtrade_ports=[8123],
@@ -476,8 +466,8 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
-        state = BotState(3600, True, -20, 20, (0, 5), last_update_id=123, freqtrade_ports=[8138])
+        settings = BotSettings(3600, True, (0, 5))
+        state = BotState(3600, True, (0, 5), last_update_id=123, freqtrade_ports=[8138])
 
         with patch.object(command_handlers, "fetch_freqtrade_container_logs", return_value="logs") as fetch_logs:
             commands.check_telegram_commands(
@@ -501,12 +491,10 @@ class TelegramCommandPollingTests(unittest.TestCase):
         ]
         session = FakeCommandSession(updates)
         config = EnvConfig("key", "secret", "token", "chat", freqtrade_api_token="ft-token")
-        settings = BotSettings(3600, -20, 20, True, (0, 5))
+        settings = BotSettings(3600, True, (0, 5))
         state = BotState(
             3600,
             True,
-            -20,
-            20,
             (0, 5),
             last_update_id=123,
             freqtrade_ports=[8123],

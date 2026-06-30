@@ -9,8 +9,6 @@ def make_state(**overrides):
     values = {
         "interval_seconds": 3600,
         "night_mode_enabled": True,
-        "pnl_alert_low": -20,
-        "pnl_alert_high": 20,
         "night_mode_window": (0, 5),
     }
     values.update(overrides)
@@ -301,11 +299,15 @@ class PortfolioSnapshotTests(unittest.TestCase):
         self.assertNotIn("\n• `ETH`:", message)
         self.assertIn("Asset Breakdown", message)
 
-    def test_format_monitoring_message_combines_spot_and_futures_without_aqi(self):
+    def test_format_monitoring_message_combines_spot_and_open_futures_without_aqi(self):
         state = make_state()
         config = EnvConfig("key", "secret", "token", "chat", iqair_api_key="iqair")
         snapshot = portfolio.PortfolioSnapshot(
-            pnl=25.0,
+            pnl={
+                "total": 0.0,
+                "open_positions": [{"symbol": "BTCUSDT", "unrealized_pnl": 0.0}],
+                "closed_trades": [],
+            },
             spot_balance={"total": 100.0, "breakdown": []},
             state_changed=False,
         )
@@ -313,8 +315,22 @@ class PortfolioSnapshotTests(unittest.TestCase):
         message = portfolio.format_monitoring_message(None, config, state, snapshot)
 
         self.assertIn("Spot", message)
-        self.assertIn("High profit", message)
+        self.assertIn("*Futures:*", message)
+        self.assertIn("BTCUSDT", message)
         self.assertNotIn("AQI", message)
+
+    def test_format_monitoring_message_is_empty_when_no_open_futures_position(self):
+        state = make_state()
+        config = EnvConfig("key", "secret", "token", "chat")
+        snapshot = portfolio.PortfolioSnapshot(
+            pnl={"total": 25.0, "open_positions": [], "closed_trades": []},
+            spot_balance=None,
+            state_changed=False,
+        )
+
+        message = portfolio.format_monitoring_message(None, config, state, snapshot)
+
+        self.assertEqual(message, "")
 
     def test_format_futures_pnl_summary_includes_open_and_closed_trades(self):
         state = make_state()

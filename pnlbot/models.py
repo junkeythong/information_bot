@@ -61,6 +61,7 @@ class BotState:
     futures_position_ranges: Dict[str, dict] = field(default_factory=dict)
     closed_position_ranges: List[dict] = field(default_factory=list)
     seen_futures_closed_trade_keys: List[str] = field(default_factory=list)
+    host_public_ip: Optional[str] = None
     runtime_config_overrides: List[str] = field(default_factory=list)
 
 

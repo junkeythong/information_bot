@@ -22,6 +22,7 @@ from pnlbot.freqtrade import (
 from pnlbot.http import create_retry_session
 from pnlbot.logging import configure_runtime_logging
 from pnlbot.messages import compose_status_message
+from pnlbot.system_info import get_public_ip
 from pnlbot.models import BotSettings, BotState, EnvConfig
 from pnlbot.monitoring import (
     monitor_loop,
@@ -51,10 +52,18 @@ def compose_startup_status_message(
     pnl: object,
     *,
     spot_balance: object,
+    host_public_ip: Optional[str] = None,
 ) -> str:
     pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, pnl)
 
-    message = compose_status_message(state, config, None, pnl, spot_balance=spot_balance)
+    message = compose_status_message(
+        state,
+        config,
+        None,
+        pnl,
+        spot_balance=spot_balance,
+        host_public_ip=host_public_ip,
+    )
     if state.freqtrade_ports:
         freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
         message += format_freqtrade_status_section(freqtrade_results)
@@ -184,6 +193,9 @@ def main() -> None:
     try:
         state.last_update_id = init_last_update_id(session, config, settings, state)
         snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
+        startup_host_ip = get_public_ip(session) or state.host_public_ip
+        if startup_host_ip:
+            state.host_public_ip = startup_host_ip
         pnl = snapshot.pnl
         if isinstance(pnl, str):
             send_telegram_message(
@@ -237,6 +249,7 @@ def main() -> None:
                 state,
                 pnl,
                 spot_balance=spot_balance,
+                host_public_ip=startup_host_ip,
             ),
             state=state,
             force_send=True,

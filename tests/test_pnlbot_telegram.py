@@ -176,16 +176,19 @@ class TelegramCommandPollingTests(unittest.TestCase):
 
         with patch.object(portfolio, "get_futures_pnl", return_value=futures_payload):
             with patch.object(portfolio, "get_spot_balance", return_value={"total": 0.0, "breakdown": []}):
-                commands.check_telegram_commands(
-                    session,
-                    config,
-                    settings,
-                    state,
-                    state.last_update_id,
-                    poll_timeout=30,
-                )
+                with patch.object(command_handlers, "get_public_ip", return_value="203.0.113.5"):
+                    commands.check_telegram_commands(
+                        session,
+                        config,
+                        settings,
+                        state,
+                        state.last_update_id,
+                        poll_timeout=30,
+                    )
 
         message = session.posts[0]["data"]["text"]
+        self.assertIn("Host IP", message)
+        self.assertIn("203.0.113.5", message)
         self.assertIn("Current PnL", message)
         self.assertIn("12.50 USDT", message)
         self.assertIn("Open Positions", message)

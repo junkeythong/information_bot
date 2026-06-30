@@ -5,13 +5,13 @@ air quality, and optional EVN power outage schedules.
 
 ## Features
 
-- Scheduled Telegram alerts for open Futures positions and daily Spot balance
+- Scheduled Telegram alerts for open Futures positions, daily Spot balance, and public IP changes
 - One-time monitor alerts when a newly closed Futures trade appears
 - Per-position observed min/max open PnL with mark price, carried into latest closed trades when observed
 - Portfolio status with `/status`, `/futures`, and `/spot`
 - Runtime configuration with `/config`
 - Manual AQI lookup and optional EVN outage reporting
-- Host health check with `/sysinfo`
+- Host health check with `/sysinfo`; `/status` also shows current public host IP
 - Local JSON state persistence
 
 ## Quick Start
@@ -75,6 +75,7 @@ Runtime interval behavior:
 - The pinned daily message contains only the lunar date; holiday names appear before the lunar date.
 - The Futures loop sends when open positions are detected.
 - Newly closed Futures trades are deduped in the state file and sent once when first observed by the monitor loop.
+- Public host IP is checked in the Futures loop using provider fallback and alerts once when it changes.
 
 ## Telegram Commands
 
@@ -106,6 +107,7 @@ Runtime interval behavior:
 • Night mode: `True`
 • Uptime: `24h,12m,5s`
 • Lunar: `Mùng 3 Tháng 2 Năm Bính Ngọ`
+• Host IP: `203.0.113.8`
 
 💰 *Spot:*
 • Init Capital: `5,000.00 USDT`

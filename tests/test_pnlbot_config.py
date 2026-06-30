@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from pnlbot import config_commands, http as http_client, monitoring, portfolio, time_utils
+from pnlbot import config_commands, http as http_client, monitoring, portfolio, system_info, time_utils
 from pnlbot.config import load_bot_settings, load_env_config
 from pnlbot.logging import RotatingLogStream
 from pnlbot.models import BotSettings, BotState, EnvConfig
@@ -51,6 +51,31 @@ class RequestsSessionTests(unittest.TestCase):
         self.assertEqual(session.verify, "/system/ca.pem")
 
 
+class PublicIpFetchTests(unittest.TestCase):
+    def test_get_public_ip_uses_first_valid_provider_response(self):
+        class Response:
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                return None
+
+        class Session:
+            def __init__(self):
+                self.calls = []
+
+            def get(self, url, timeout):
+                self.calls.append(url)
+                if len(self.calls) == 1:
+                    return Response("not-an-ip")
+                return Response(" 203.0.113.8\n")
+
+        session = Session()
+
+        self.assertEqual(system_info.get_public_ip(session), "203.0.113.8")
+        self.assertEqual(len(session.calls), 2)
+
+
 class LogRotationTests(unittest.TestCase):
     def test_rotating_log_stream_keeps_current_log_and_one_backup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -68,6 +93,19 @@ class LogRotationTests(unittest.TestCase):
 
 
 class PersistedStateValidationTests(unittest.TestCase):
+    def test_persisted_host_public_ip_round_trip(self):
+        settings, state = make_settings_and_state()
+        state.host_public_ip = "203.0.113.9"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state.json"
+            persist_runtime_state(str(state_path), state, settings)
+            restored = BotState(3600, True, (0, 5))
+            apply_persisted_configuration(load_persisted_state(str(state_path)), restored, settings)
+
+        self.assertEqual(restored.host_public_ip, "203.0.113.9")
+
+
     def test_ignores_invalid_persisted_bounds_and_parses_boolean_strings(self):
         settings, state = make_settings_and_state()
 
@@ -722,6 +760,30 @@ class FreqtradeMonitoringTests(unittest.TestCase):
         self.assertIn("BTCUSDT", alert)
         self.assertIn("3.25 USDT", alert)
         self.assertEqual(state.seen_futures_closed_trade_keys[0], "BTCUSDT:BOTH:LONG:1000:3.25000000")
+
+    def test_monitor_loop_alerts_public_ip_change(self):
+        settings, state = make_settings_and_state()
+        config = EnvConfig("key", "secret", "token", "chat")
+        state.last_outage_check = monitoring.time.time()
+        state.host_public_ip = "203.0.113.1"
+        pnl = {"total": 0.0, "open_positions": [], "closed_trades": []}
+
+        with patch.object(monitoring.portfolio, "refresh_futures_pnl", return_value=(pnl, False)):
+            with patch.object(monitoring.portfolio, "refresh_spot_balance", return_value=({"total": 0.0, "breakdown": []}, False)):
+                with patch.object(monitoring, "get_public_ip", return_value="203.0.113.2"):
+                    with patch.object(monitoring, "enrich_pnl_with_freqtrade_exit_reasons", return_value=pnl):
+                        with patch.object(monitoring, "persist_runtime_state") as persist_state:
+                            with patch.object(monitoring, "send_telegram_message") as send_message:
+                                monitoring.monitor_loop(None, config, settings, state)
+
+        self.assertEqual(state.host_public_ip, "203.0.113.2")
+        persist_state.assert_called_once()
+        self.assertEqual(send_message.call_count, 1)
+        alert = send_message.call_args.args[3]
+        self.assertIn("Host public IP changed", alert)
+        self.assertIn("203.0.113.1", alert)
+        self.assertIn("203.0.113.2", alert)
+
 
     def test_monitor_loop_does_not_repeat_seen_closed_trade(self):
         settings, state = make_settings_and_state()

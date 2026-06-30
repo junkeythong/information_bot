@@ -43,8 +43,11 @@ class StartupStatusMessageTests(unittest.TestCase):
                     state,
                     pnl,
                     spot_balance={"total": 0.0, "breakdown": []},
+                    host_public_ip="203.0.113.6",
                 )
 
+        self.assertIn("Host IP", message)
+        self.assertIn("203.0.113.6", message)
         self.assertIn("exit: `roi`", message)
         self.assertIn("\n\n🤖 *Bots:*", message)
         self.assertIn("`8136`: ✅ healthy", message)

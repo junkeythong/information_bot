@@ -1,3 +1,4 @@
+import socket
 import threading
 import time
 from typing import List
@@ -15,7 +16,7 @@ from .messages import format_closed_trade_lines
 from .models import BotSettings, BotState, EnvConfig
 from .outages import get_power_outages
 from .persistence import persist_runtime_state
-from .system_info import get_system_info_text
+from .system_info import get_public_ip, get_system_info_text
 from .telegram import send_telegram_message
 
 
@@ -150,18 +151,52 @@ def format_closed_futures_trade_alert(closed_trades: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def maybe_send_public_ip_change_alert(
+    session: requests.Session,
+    config: EnvConfig,
+    settings: BotSettings,
+    state: BotState,
+) -> bool:
+    current_ip = get_public_ip(session)
+    if not current_ip:
+        return False
+
+    previous_ip = state.host_public_ip
+    if not previous_ip:
+        state.host_public_ip = current_ip
+        return True
+
+    if current_ip == previous_ip:
+        return False
+
+    hostname = socket.gethostname() or "unknown-host"
+    state.host_public_ip = current_ip
+    send_telegram_message(
+        session,
+        config,
+        settings,
+        f"🌐 *Host public IP changed*\n• Host: `{hostname}`\n• From: `{previous_ip}`\n• To: `{current_ip}`",
+        state=state,
+        force_send=True,
+    )
+    return True
+
+
 def monitor_loop(session: requests.Session, config: EnvConfig, settings: BotSettings, state: BotState) -> None:
     now = time.time()
     pnl, pnl_changed = portfolio.refresh_futures_pnl(session, config, state)
     _, spot_changed = portfolio.refresh_spot_balance(session, config, state)
+    ip_changed = maybe_send_public_ip_change_alert(session, config, settings, state)
     snapshot = portfolio.PortfolioSnapshot(
         pnl=pnl,
         spot_balance=None,
-        state_changed=pnl_changed or spot_changed,
+        state_changed=pnl_changed or spot_changed or ip_changed,
     )
 
     if isinstance(snapshot.pnl, str):
         send_telegram_message(session, config, settings, snapshot.pnl, state=state, force_send=True)
+        if snapshot.state_changed:
+            persist_runtime_state(STATE_FILE_PATH, state, settings)
         return
 
     snapshot.pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, snapshot.pnl)

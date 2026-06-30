@@ -17,7 +17,7 @@ from .messages import compose_status_message
 from .models import BotSettings, BotState, EnvConfig
 from .outages import get_power_outages
 from .persistence import persist_runtime_state
-from .system_info import get_system_info_text
+from .system_info import get_public_ip, get_system_info_text
 from .telegram import send_telegram_message
 
 
@@ -53,7 +53,15 @@ def handle_status_command(
     snapshot = portfolio.refresh_portfolio_snapshot(session, config, state)
 
     pnl = enrich_pnl_with_freqtrade_exit_reasons(session, config, state.freqtrade_ports, snapshot.pnl)
-    message = compose_status_message(state, config, None, pnl, spot_balance=snapshot.spot_balance)
+    host_public_ip = get_public_ip(session) or state.host_public_ip
+    message = compose_status_message(
+        state,
+        config,
+        None,
+        pnl,
+        spot_balance=snapshot.spot_balance,
+        host_public_ip=host_public_ip,
+    )
     if state.freqtrade_ports:
         freqtrade_results = check_freqtrade_bots(session, config, state.freqtrade_ports)
         message += format_freqtrade_status_section(freqtrade_results)

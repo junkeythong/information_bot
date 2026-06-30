@@ -208,6 +208,7 @@ def compose_status_message(
     current_pnl: Union[float, str],
     *,
     spot_balance: Optional[Union[float, str]] = None,
+    host_public_ip: Optional[str] = None,
 ) -> str:
     lines = [
         "🧭 Status:",
@@ -217,6 +218,9 @@ def compose_status_message(
         f"• Uptime: `{get_uptime(state)}`",
         f"• Lunar: `{get_lunar_date_string(config.timezone)}`",
     ]
+    effective_host_ip = host_public_ip or state.host_public_ip
+    if effective_host_ip:
+        lines.append(f"• Host IP: `{effective_host_ip}`")
 
     lines.extend([
         "",

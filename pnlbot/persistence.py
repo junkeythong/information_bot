@@ -223,6 +223,9 @@ def apply_persisted_configuration(persisted: dict, state: BotState, settings: Bo
         state.seen_futures_closed_trade_keys = [
             item for item in seen_closed_trade_keys if isinstance(item, str)
         ][:50]
+    host_public_ip = state_data.get("host_public_ip")
+    if isinstance(host_public_ip, str) and host_public_ip.strip():
+        state.host_public_ip = host_public_ip.strip()
     state.last_outage_check = _safe_float(state_data.get("last_outage_check"), state.last_outage_check)
     if _has_override("freqtrade_ports"):
         raw_freqtrade_ports = state_data.get("freqtrade_ports")
@@ -361,6 +364,7 @@ def persist_runtime_state(
         "futures_position_ranges": state.futures_position_ranges,
         "closed_position_ranges": state.closed_position_ranges,
         "seen_futures_closed_trade_keys": state.seen_futures_closed_trade_keys,
+        "host_public_ip": state.host_public_ip,
         "runtime_config_overrides": state.runtime_config_overrides,
         "runtime_config_overrides_version": RUNTIME_CONFIG_OVERRIDES_VERSION,
     }

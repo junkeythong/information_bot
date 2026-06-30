@@ -225,8 +225,9 @@ The state file stores runtime overrides, Spot min/max snapshots, observed Future
 To use `/restart`, install the narrow sudoers rule from `template/pnlbot.sudoers`:
 
 ```bash
-sudo install -m 0440 template/pnlbot.sudoers /etc/sudoers.d/pnlbot
+sed "s/<linux-user>/$(whoami)/" template/pnlbot.sudoers | sudo tee /etc/sudoers.d/pnlbot >/dev/null
+sudo chmod 0440 /etc/sudoers.d/pnlbot
 sudo visudo -cf /etc/sudoers.d/pnlbot
 ```
 
-The rule only allows `thonggia` to run `/usr/bin/systemctl restart pnl.service` without a password.
+The rule only allows the configured Linux user to run `/usr/bin/systemctl restart pnl.service` without a password.

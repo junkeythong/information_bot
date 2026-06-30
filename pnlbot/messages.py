@@ -14,6 +14,24 @@ def format_closed_trade_line(trade: dict, *, bullet: str = "•") -> str:
     return format_closed_trade_lines(trade, bullet=bullet)[0]
 
 
+def format_futures_account_balance_lines(pnl: dict, *, bullet: str = "•") -> list:
+    fields = [
+        ("Wallet Balance", "wallet_balance"),
+        ("Available Balance", "available_balance"),
+        ("Margin Balance", "margin_balance"),
+    ]
+    lines = []
+    for label, key in fields:
+        if key not in pnl:
+            continue
+        try:
+            value = float(pnl.get(key, 0.0))
+        except (TypeError, ValueError):
+            continue
+        lines.append(f"{bullet} {label}: `{value:,.2f} USDT`")
+    return lines
+
+
 def format_closed_trade_lines(trade: dict, *, bullet: str = "•", detail_bullet: str = "  ▫️") -> list:
     trade_pnl = float(trade.get("pnl", 0.0))
     exit_reason = trade.get("exit_reason")
@@ -79,44 +97,108 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _trim_decimal(text: str) -> str:
+    if "." not in text:
+        return text
+    return text.rstrip("0").rstrip(".")
+
+
 def _format_price(value: float) -> str:
     if value >= 1:
-        return f"{value:,.4f}"
+        return _trim_decimal(f"{value:,.4f}")
     if value >= 0.01:
-        return f"{value:,.6f}"
-    return f"{value:,.8f}"
+        return _trim_decimal(f"{value:,.6f}")
+    return _trim_decimal(f"{value:,.8f}")
 
 
-def format_spot_asset_snapshot_lines(assets: list, *, indent: str = "  ▫️", max_items: int = 5) -> list:
+def format_spot_current_asset_lines(assets: list, *, indent: str = "  ▫️", max_items: int = 5) -> list:
     lines = []
     for item in (assets or [])[:max_items]:
         asset = item.get("asset", "UNKNOWN")
-        amount = _safe_float(item.get("amount"))
         price = _safe_float(item.get("price"))
         value = _safe_float(item.get("usdt_value"))
         if asset == "USDT":
             lines.append(f"{indent} `{asset}`: `{value:,.2f} USDT`")
         else:
-            lines.append(
-                f"{indent} `{asset}`: `{amount:,.8f}` @ `{_format_price(price)}` = `{value:,.2f} USDT`"
-            )
+            lines.append(f"{indent} `{asset}`: `{value:,.2f} USDT` @ `{_format_price(price)}`")
     if assets and len(assets) > max_items:
         lines.append(f"{indent} ... and {len(assets) - max_items} more assets")
     return lines
 
 
-def format_spot_range_lines(
+def format_spot_snapshot_price_lines(assets: list, *, indent: str = "  ▫️", max_items: int = 5) -> list:
+    lines = []
+    for item in (assets or [])[:max_items]:
+        asset = item.get("asset", "UNKNOWN")
+        price = _safe_float(item.get("price"))
+        value = _safe_float(item.get("usdt_value"))
+        if asset == "USDT":
+            lines.append(f"{indent} `{asset}`: `{value:,.2f} USDT`")
+        else:
+            lines.append(f"{indent} `{asset}` @ `{_format_price(price)}`")
+    if assets and len(assets) > max_items:
+        lines.append(f"{indent} ... and {len(assets) - max_items} more assets")
+    return lines
+
+
+def spot_percent_text(total: float, init_capital: Optional[float]) -> str:
+    if not init_capital:
+        return ""
+    pct = (total - init_capital) / init_capital * 100
+    return f" ({pct:+.2f}%)"
+
+
+def format_spot_min_max_lines(
     label: str,
     total: float,
     assets: list,
-    observed_at: Optional[str],
+    init_capital: Optional[float],
     *,
     asset_indent: str = "  ▫️",
 ) -> list:
-    header = f"• {label}: `{total:,.2f} USDT`"
-    if observed_at:
-        header += f" ({observed_at})"
-    return [header] + format_spot_asset_snapshot_lines(assets, indent=asset_indent)
+    if total <= 0:
+        return []
+    lines = [f"• {label}: `{total:,.2f} USDT`{spot_percent_text(total, init_capital)}"]
+    lines.extend(format_spot_snapshot_price_lines(assets, indent=asset_indent))
+    return lines
+
+
+def format_spot_sections(
+    state: BotState,
+    spot_balance: dict,
+    *,
+    max_current_items: Optional[int] = None,
+    current_asset_indent: str = "  ▫️",
+    range_asset_indent: str = "  ▫️",
+) -> list:
+    lines = []
+    breakdown = spot_balance.get("breakdown", [])
+    if max_current_items is not None:
+        breakdown = breakdown[:max_current_items]
+
+    if breakdown:
+        lines.append("• Current:")
+        lines.extend(format_spot_current_asset_lines(breakdown, indent=current_asset_indent))
+
+    lines.extend(
+        format_spot_min_max_lines(
+            "Min",
+            state.min_spot_balance,
+            state.min_spot_assets,
+            state.init_capital,
+            asset_indent=range_asset_indent,
+        )
+    )
+    lines.extend(
+        format_spot_min_max_lines(
+            "Max",
+            state.max_spot_balance,
+            state.max_spot_assets,
+            state.init_capital,
+            asset_indent=range_asset_indent,
+        )
+    )
+    return lines
 
 
 def compose_status_message(
@@ -150,66 +232,31 @@ def compose_status_message(
                 pnl_perc = (total - state.init_capital) / state.init_capital * 100
                 icon = get_pnl_icon(pnl_perc)
                 pnl_perc_line = f" {icon} ({pnl_perc:+.2f}%)"
-                max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
-                min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
             lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-            if state.min_spot_balance > 0 or state.max_spot_balance > 0:
-                lines.append("• Range:")
-                min_lines = format_spot_range_lines(
-                    "Min",
-                    state.min_spot_balance,
-                    state.min_spot_assets,
-                    state.min_spot_observed_at,
-                    asset_indent="    ▫️",
+            lines.extend(
+                format_spot_sections(
+                    state,
+                    spot_balance,
+                    max_current_items=5,
+                    current_asset_indent="  ▫️",
+                    range_asset_indent="  ▫️",
                 )
-                max_lines = format_spot_range_lines(
-                    "Max",
-                    state.max_spot_balance,
-                    state.max_spot_assets,
-                    state.max_spot_observed_at,
-                    asset_indent="    ▫️",
-                )
-                if state.init_capital:
-                    min_lines[0] += f" ({min_perc:+.2f}%)"
-                    max_lines[0] += f" ({max_perc:+.2f}%)"
-                lines.extend(f"  {line}" for line in min_lines)
-                lines.extend(f"  {line}" for line in max_lines)
-            breakdown = spot_balance.get("breakdown", [])
-            for item in breakdown[:5]:
-                price_str = f" @ {item['price']:,.4f}" if item['asset'] != "USDT" else ""
-                lines.append(f"  ▫️ `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}")
-            if len(breakdown) > 5:
-                lines.append(f"  ▫️ ... and {len(breakdown)-5} more assets")
+            )
         elif isinstance(spot_balance, (int, float)):
             total = float(spot_balance)
             pnl_perc_line = ""
             if state.init_capital:
                 pnl_perc = (total - state.init_capital) / state.init_capital * 100
                 pnl_perc_line = f" ({pnl_perc:+.2f}%)"
-                max_perc = (state.max_spot_balance - state.init_capital) / state.init_capital * 100
-                min_perc = (state.min_spot_balance - state.init_capital) / state.init_capital * 100
             lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_line}")
-            if state.min_spot_balance > 0 or state.max_spot_balance > 0:
-                lines.append("• Range:")
-                min_lines = format_spot_range_lines(
-                    "Min",
-                    state.min_spot_balance,
-                    state.min_spot_assets,
-                    state.min_spot_observed_at,
-                    asset_indent="    ▫️",
+            lines.extend(
+                format_spot_sections(
+                    state,
+                    {"breakdown": []},
+                    current_asset_indent="  ▫️",
+                    range_asset_indent="  ▫️",
                 )
-                max_lines = format_spot_range_lines(
-                    "Max",
-                    state.max_spot_balance,
-                    state.max_spot_assets,
-                    state.max_spot_observed_at,
-                    asset_indent="    ▫️",
-                )
-                if state.init_capital:
-                    min_lines[0] += f" ({min_perc:+.2f}%)"
-                    max_lines[0] += f" ({max_perc:+.2f}%)"
-                lines.extend(f"  {line}" for line in min_lines)
-                lines.extend(f"  {line}" for line in max_lines)
+            )
         else:
             lines.append(f"• {spot_balance}")
 
@@ -221,6 +268,7 @@ def compose_status_message(
         total_pnl = float(current_pnl.get("total", 0.0))
         icon = get_pnl_icon(total_pnl)
         lines.append(f"• Current PnL: `{total_pnl:,.2f} USDT` {icon}")
+        lines.extend(format_futures_account_balance_lines(current_pnl))
     else:
         if isinstance(current_pnl, (int, float)):
             icon = get_pnl_icon(current_pnl)

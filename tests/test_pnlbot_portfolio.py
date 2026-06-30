@@ -46,6 +46,9 @@ class PortfolioSnapshotTests(unittest.TestCase):
         config = EnvConfig("key", "secret", "token", "chat")
         pnl = {
             "total": 12.5,
+            "wallet_balance": 520.5,
+            "available_balance": 410.25,
+            "margin_balance": 531.61,
             "open_positions": [
                 {
                     "symbol": "BTCUSDT",
@@ -288,16 +291,18 @@ class PortfolioSnapshotTests(unittest.TestCase):
             state,
             spot_balance,
             max_breakdown_items=1,
-            include_asset_heading=True,
         )
 
         self.assertIn("Spot", message)
         self.assertIn("+10.00%", message)
-        self.assertIn("`ETH`: `0.02666667` @ `3,000.0000` = `80.00 USDT`", message)
-        self.assertIn("2026-06-28 12:00", message)
-        self.assertIn("BTC", message)
-        self.assertNotIn("\n• `ETH`:", message)
-        self.assertIn("Asset Breakdown", message)
+        self.assertIn("• Current:", message)
+        self.assertIn("`BTC`: `70.00 USDT` @ `100,000`", message)
+        self.assertIn("• Min: `80.00 USDT` (-20.00%)", message)
+        self.assertIn("`ETH` @ `3,000`", message)
+        self.assertIn("• Max: `120.00 USDT` (+20.00%)", message)
+        self.assertNotIn("0.02666667", message)
+        self.assertNotIn("2026-06-28 12:00", message)
+        self.assertNotIn("\n  ▫️ `ETH`: `40.00 USDT`", message)
 
     def test_format_monitoring_message_combines_spot_and_open_futures_without_aqi(self):
         state = make_state()
@@ -336,6 +341,9 @@ class PortfolioSnapshotTests(unittest.TestCase):
         state = make_state()
         pnl = {
             "total": 12.5,
+            "wallet_balance": 520.5,
+            "available_balance": 410.25,
+            "margin_balance": 531.61,
             "open_positions": [
                 {
                     "symbol": "BTCUSDT",
@@ -371,6 +379,12 @@ class PortfolioSnapshotTests(unittest.TestCase):
 
         self.assertIn("Futures", message)
         self.assertIn("12.50 USDT", message)
+        self.assertIn("Wallet Balance", message)
+        self.assertIn("520.50 USDT", message)
+        self.assertIn("Available Balance", message)
+        self.assertIn("410.25 USDT", message)
+        self.assertIn("Margin Balance", message)
+        self.assertIn("531.61 USDT", message)
         self.assertIn("Open Positions", message)
         self.assertIn("BTCUSDT", message)
         self.assertIn("10.00 USDT", message)

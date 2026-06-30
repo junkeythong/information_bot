@@ -6,7 +6,7 @@ import pytz
 import requests
 
 from .market_data import get_futures_pnl, get_spot_balance
-from .messages import format_closed_trade_lines, format_open_position_lines, format_spot_range_lines, get_pnl_icon
+from .messages import format_closed_trade_lines, format_futures_account_balance_lines, format_open_position_lines, format_spot_sections, get_pnl_icon
 from .models import BotState, EnvConfig
 from .state import update_spot_balance_range
 
@@ -247,7 +247,6 @@ def format_spot_balance_summary(
     spot_balance: BalanceResult,
     *,
     max_breakdown_items: Optional[int] = None,
-    include_asset_heading: bool = False,
     hide_empty: bool = False,
 ) -> str:
     total = get_spot_total(spot_balance)
@@ -263,34 +262,17 @@ def format_spot_balance_summary(
             icon = get_pnl_icon(pnl_perc)
             pnl_perc_info = f" {icon} ({pnl_perc:+.2f}%)"
 
-        lines = [f"💰 *Spot:* `{total:,.2f} USDT`{pnl_perc_info}"]
-        if state.min_spot_balance > 0 or state.max_spot_balance > 0:
-            lines.extend([
-                "📊 *Range:*",
-                *format_spot_range_lines(
-                    "Min",
-                    state.min_spot_balance,
-                    state.min_spot_assets,
-                    state.min_spot_observed_at,
-                ),
-                *format_spot_range_lines(
-                    "Max",
-                    state.max_spot_balance,
-                    state.max_spot_assets,
-                    state.max_spot_observed_at,
-                ),
-            ])
-
-        breakdown = spot_balance.get("breakdown", [])
-        if max_breakdown_items is not None:
-            breakdown = breakdown[:max_breakdown_items]
-
-        if breakdown:
-            if include_asset_heading:
-                lines.append("\n*Asset Breakdown:*")
-            for item in breakdown:
-                price_str = f" @ {item['price']:,.4f}" if item["asset"] != "USDT" else ""
-                lines.append(f"• `{item['asset']}`: `{item['usdt_value']:,.2f} USDT`{price_str}")
+        lines = ["💰 *Spot:*"]
+        if state.init_capital:
+            lines.append(f"• Init Capital: `{state.init_capital:,.2f} USDT`")
+        lines.append(f"• Total: `{total:,.2f} USDT`{pnl_perc_info}")
+        lines.extend(
+            format_spot_sections(
+                state,
+                spot_balance,
+                max_current_items=max_breakdown_items,
+            )
+        )
 
         return "\n".join(lines)
 
@@ -319,6 +301,7 @@ def format_futures_pnl_summary(
     if isinstance(pnl, dict):
         open_positions = pnl.get("open_positions", [])
         closed_trades = pnl.get("closed_trades", [])
+        lines.extend(format_futures_account_balance_lines(pnl))
 
         lines.append("")
         lines.append("*Open Positions:*")

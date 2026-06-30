@@ -242,7 +242,7 @@ def handle_spot_command(
         session,
         config,
         settings,
-        portfolio.format_spot_balance_summary(state, spot_balance, include_asset_heading=True),
+        portfolio.format_spot_balance_summary(state, spot_balance),
         chat_id=chat_id,
         state=state,
         force_send=True,
@@ -357,7 +357,7 @@ def handle_help_command(
         settings,
         "*ℹ️ Info commands:*\n"
         "• `/status` – Comprehensive snapshot (Futures and Spot)\n"
-        "• `/futures` – Futures PnL, open positions with observed min/max, and latest closed positions\n"
+        "• `/futures` – Futures PnL, balances, open positions with observed min/max, and latest closed positions\n"
         "• `/freqtrade logs <port>` – show the last 100 Docker log lines for a monitored Freqtrade bot\n"
         "• `/spot` – Quick spot balance check\n"
         "• `/aqi` – Manual air quality index (IQAir)\n"

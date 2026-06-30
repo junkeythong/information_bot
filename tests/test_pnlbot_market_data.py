@@ -31,6 +31,9 @@ class FuturesMarketDataTests(unittest.TestCase):
         session = FakeSession(
             [
                 {
+                    "totalWalletBalance": "520.50",
+                    "availableBalance": "410.25",
+                    "totalMarginBalance": "531.61",
                     "positions": [
                         {
                             "symbol": "BTCUSDT",
@@ -74,6 +77,9 @@ class FuturesMarketDataTests(unittest.TestCase):
             result = get_futures_pnl(session, config)
 
         self.assertEqual(result["total"], 11.11)
+        self.assertEqual(result["wallet_balance"], 520.5)
+        self.assertEqual(result["available_balance"], 410.25)
+        self.assertEqual(result["margin_balance"], 531.61)
         self.assertEqual(
             result["open_positions"],
             [

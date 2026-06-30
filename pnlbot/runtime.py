@@ -141,7 +141,6 @@ def send_daily_spot_report(
         portfolio.format_spot_balance_summary(
             state,
             spot_balance,
-            include_asset_heading=True,
         ),
         state=state,
         force_send=True,

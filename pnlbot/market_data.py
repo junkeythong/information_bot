@@ -165,6 +165,9 @@ def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[dict,
         data = response.json()
         positions = data.get("positions", [])
         total_unrealized_pnl = sum(_as_float(position.get("unrealizedProfit")) for position in positions)
+        wallet_balance = _as_float(data.get("totalWalletBalance"))
+        available_balance = _as_float(data.get("availableBalance"))
+        margin_balance = _as_float(data.get("totalMarginBalance"))
 
         open_positions = []
         for position in positions:
@@ -197,6 +200,9 @@ def get_futures_pnl(session: requests.Session, config: EnvConfig) -> Union[dict,
 
         return {
             "total": round(total_unrealized_pnl, 2),
+            "wallet_balance": round(wallet_balance, 2),
+            "available_balance": round(available_balance, 2),
+            "margin_balance": round(margin_balance, 2),
             "open_positions": open_positions,
             "closed_trades": closed_trades,
         }

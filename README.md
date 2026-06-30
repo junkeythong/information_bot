@@ -71,7 +71,7 @@ Runtime interval behavior:
 - Telegram command polling is separate and remains responsive between Futures polls.
 - Per-position Futures min/max PnL and price are observed only at bot poll times, not tick-by-tick.
 - Spot is reported once daily at the daily 8:00 AM check, remains available on demand with `/spot` and `/status`, and silently keeps min/max balance history during the Futures loop.
-- Spot min/max history includes an asset price snapshot and local observation time at each min/max point.
+- Spot min/max history stores an asset price snapshot at each min/max point.
 - The pinned daily message contains only the lunar date; holiday names appear before the lunar date.
 - The Futures loop sends when open positions are detected.
 - Newly closed Futures trades are deduped in the state file and sent once when first observed by the monitor loop.
@@ -81,7 +81,7 @@ Runtime interval behavior:
 | Command | Description |
 | --- | --- |
 | `/status` | Full bot and portfolio status |
-| `/futures` | Futures PnL, open positions with observed min/max, and latest closed positions |
+| `/futures` | Futures PnL, account balances, open positions with observed min/max, and latest closed positions |
 | `/freqtrade logs <port>` | Last 100 Docker log lines for a monitored Freqtrade bot |
 | `/spot` | Spot wallet summary |
 | `/aqi` | Manual air quality report, when configured |
@@ -110,16 +110,21 @@ Runtime interval behavior:
 💰 *Spot:*
 • Init Capital: `5,000.00 USDT`
 • Total: `5,420.50 USDT` 🟢 (+8.41%)
-• Range:
-  • Min: `5,200.00 USDT` (2026-06-28 12:00) (+4.00%)
-    ▫️ `BTC`: `0.03248731` @ `98,500.2500` = `3,200.00 USDT`
-    ▫️ `ETH`: `0.56601636` @ `2,650.1000` = `1,500.00 USDT`
-  • Max: `5,600.00 USDT` (2026-06-29 12:00) (+12.00%)
-    ▫️ `BTC`: `0.03500000` @ `100,000.0000` = `3,500.00 USDT`
-    ▫️ `ETH`: `0.77777778` @ `2,700.0000` = `2,100.00 USDT`
+• Current:
+  ▫️ `BTC`: `3,200.00 USDT` @ `98,500.25`
+  ▫️ `ETH`: `1,500.00 USDT` @ `2,650.1`
+• Min: `5,200.00 USDT` (+4.00%)
+  ▫️ `BTC` @ `98,500.25`
+  ▫️ `ETH` @ `2,650.1`
+• Max: `5,600.00 USDT` (+12.00%)
+  ▫️ `BTC` @ `100,000`
+  ▫️ `ETH` @ `2,700`
 
 💰 *Futures:*
 • Current PnL: `125.40 USDT` 🟢
+• Wallet Balance: `520.50 USDT`
+• Available Balance: `410.25 USDT`
+• Margin Balance: `645.90 USDT`
 • Open Positions:
   ▫️ `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`
     ▪️ Observed Open Min: `-12.00 USDT` 🔴 @ `61,500`
@@ -138,24 +143,27 @@ Runtime interval behavior:
 ### `/spot`
 
 ```text
-💰 *Spot:* `5,420.50 USDT` 🟢 (+8.41%)
-📊 *Range:*
-• Min: `5,200.00 USDT` (2026-06-28 12:00)
-  ▫️ `BTC`: `0.03248731` @ `98,500.2500` = `3,200.00 USDT`
-  ▫️ `ETH`: `0.56601636` @ `2,650.1000` = `1,500.00 USDT`
-• Max: `5,600.00 USDT` (2026-06-29 12:00)
-  ▫️ `BTC`: `0.03500000` @ `100,000.0000` = `3,500.00 USDT`
-  ▫️ `ETH`: `0.77777778` @ `2,700.0000` = `2,100.00 USDT`
-
-*Asset Breakdown:*
-• `BTC`: `3,200.00 USDT` @ 98,500.2500
-• `ETH`: `1,500.00 USDT` @ 2,650.1000
+💰 *Spot:*
+• Init Capital: `5,000.00 USDT`
+• Total: `5,420.50 USDT` 🟢 (+8.41%)
+• Current:
+  ▫️ `BTC`: `3,200.00 USDT` @ `98,500.25`
+  ▫️ `ETH`: `1,500.00 USDT` @ `2,650.1`
+• Min: `5,200.00 USDT` (+4.00%)
+  ▫️ `BTC` @ `98,500.25`
+  ▫️ `ETH` @ `2,650.1`
+• Max: `5,600.00 USDT` (+12.00%)
+  ▫️ `BTC` @ `100,000`
+  ▫️ `ETH` @ `2,700`
 ```
 
 ### `/futures`
 
 ```text
 💰 *Futures:* `125.40 USDT` 🟢
+• Wallet Balance: `520.50 USDT`
+• Available Balance: `410.25 USDT`
+• Margin Balance: `645.90 USDT`
 
 *Open Positions:*
 • `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`

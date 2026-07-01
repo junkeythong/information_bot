@@ -126,7 +126,6 @@ Runtime interval behavior:
 • Current PnL: `125.40 USDT` 🟢
 • Wallet Balance: `520.50 USDT`
 • Available Balance: `410.25 USDT`
-• Margin Balance: `645.90 USDT`
 • Open Positions:
   ▫️ `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`
     ▪️ Observed Open Min: `-12.00 USDT` 🔴 @ `61,500`
@@ -165,7 +164,6 @@ Runtime interval behavior:
 💰 *Futures:* `125.40 USDT` 🟢
 • Wallet Balance: `520.50 USDT`
 • Available Balance: `410.25 USDT`
-• Margin Balance: `645.90 USDT`
 
 *Open Positions:*
 • `BTCUSDT` LONG: `100.00 USDT` 🟢 @ `63,000`

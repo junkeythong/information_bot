@@ -18,7 +18,6 @@ def format_futures_account_balance_lines(pnl: dict, *, bullet: str = "•") -> l
     fields = [
         ("Wallet Balance", "wallet_balance"),
         ("Available Balance", "available_balance"),
-        ("Margin Balance", "margin_balance"),
     ]
     lines = []
     for label, key in fields:
